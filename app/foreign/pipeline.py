@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 
 from ..money import D
-from ..schemas import ForeignTaxPayment, TaxReturn
+from ..schemas import ForeignTaxPayment, TaxPayment, TaxReturn
 from . import dividends as dividend_module
 from . import espp as espp_module
 from . import rsu as rsu_module
@@ -71,7 +71,7 @@ def apply_foreign(
     result = ForeignResult()
     if not (tr.rsu_vests or tr.dividends or tr.foreign_sales
             or tr.foreign_holdings or tr.vesting_schedules
-            or tr.espp_purchases):
+            or tr.espp_purchases or tr.dividend_schedules):
         return tr, result
 
     working = deepcopy(tr)
@@ -125,17 +125,67 @@ def apply_foreign(
         _add_perquisite_to_salary(working, perquisite)
         result.perquisite_added_to_salary = perquisite
 
-    # -- 2. Dividends: other-sources income, and reinvestment lots ----------
-    dividend_result = dividend_module.compute_dividends(working, forex)
+    # -- 2. Dividends -------------------------------------------------------
+    # Sized against the holdings ledger, so a payment follows the position that
+    # actually existed on the record date rather than the one held today. That
+    # needs the lots from vesting and ESPP, so it happens here — before the
+    # reinvestment lots, which the dividends themselves create.
+    base_lots = vests.lots + espp.lots
+    prior_sales = [
+        rsu_module.SaleEvent(
+            symbol=sale.symbol, sale_date=sale.sale_date, shares=sale.shares,
+            price_per_share_fx=sale.price_per_share_fx, currency=sale.currency,
+        )
+        for sale in working.foreign_sales if sale.shares > 0
+    ]
+
+    if working.dividend_schedules:
+        from ..tax.rules import get_ay
+
+        year = get_ay(working.assessment_year)
+        generated, schedule_warnings = dividend_module.expand_schedules(
+            working, base_lots, prior_sales, year.fy_start, year.fy_end
+        )
+        result.warnings.extend(schedule_warnings)
+        working.dividends.extend(generated)
+
+    dividend_result = dividend_module.compute_dividends(
+        working, forex, base_lots, prior_sales
+    )
     result.dividends = dividend_result
     result.warnings.extend(dividend_result.warnings)
+
+    # Foreign and Indian dividends are the same income under different
+    # plumbing, and they sit in different lines of Schedule OS.
     working.other_sources.foreign_dividend_income += dividend_result.total_gross_inr
+    working.other_sources.dividend_income += dividend_result.total_domestic_inr
+
+    # Section 194 TDS is an ordinary tax credit, not a foreign one.
+    for row in dividend_module.to_tds_payments(dividend_result):
+        working.taxes_paid.payments.append(TaxPayment(**row))
+
+    # Section 57(i): interest on money borrowed to buy the shares, capped at a
+    # fifth of the dividend income. Allowed in both regimes — section 115BAC
+    # restricts only clause (iia), the family-pension deduction.
+    interest_claimed = working.other_sources.dividend_interest_expense
+    if interest_claimed > 0:
+        allowed = dividend_module.section_57_interest_allowed(
+            dividend_result.total_all_inr, interest_claimed
+        )
+        working.other_sources.section_57_deductions += allowed
+        if allowed < interest_claimed:
+            result.warnings.append(
+                f"Of ₹{interest_claimed:,.0f} of interest on money borrowed to "
+                f"buy the shares, only ₹{allowed:,.0f} is deductible — the "
+                "proviso to section 57(i) caps it at 20% of the dividend "
+                "income, and no other expense is allowed at all."
+            )
 
     drip_lots, drip_warnings = rsu_module.dividend_lots(working, forex)
     result.warnings.extend(drip_warnings)
 
     # -- 3. Lots, and the sales matched against them ------------------------
-    lots = vests.lots + espp.lots + drip_lots
+    lots = base_lots + drip_lots
     result.lots = lots
 
     sales = [

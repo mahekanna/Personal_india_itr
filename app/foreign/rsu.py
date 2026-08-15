@@ -410,6 +410,42 @@ def _origin_label(origin: str) -> str:
     }.get(origin, "acquired")
 
 
+def shares_held_on(
+    lots: List[Lot],
+    sales: List[SaleEvent],
+    symbol: str,
+    when: date,
+) -> Decimal:
+    """How many shares of ``symbol`` were held on ``when``.
+
+    Reads the same lot ledger the capital-gains matching uses, so a position
+    grows automatically as tranches vest and as dividends are reinvested, and
+    shrinks as shares are sold. That is what lets a dividend be checked against
+    what was actually held on the record date rather than taken on trust.
+    """
+    key = symbol.upper()
+    acquired = sum(
+        (lot.shares for lot in lots
+         if lot.symbol.upper() == key and lot.acquired and lot.acquired <= when),
+        D(0),
+    )
+    disposed = sum(
+        (sale.shares for sale in sales
+         if sale.symbol.upper() == key and sale.sale_date and sale.sale_date <= when),
+        D(0),
+    )
+    return non_negative(acquired - disposed)
+
+
+def symbols_held(lots: List[Lot]) -> List[str]:
+    seen: List[str] = []
+    for lot in lots:
+        key = lot.symbol.upper()
+        if key and key not in seen:
+            seen.append(key)
+    return seen
+
+
 def remaining_holdings(
     sales: List[SaleEvent], lots: List[Lot]
 ) -> List[Lot]:

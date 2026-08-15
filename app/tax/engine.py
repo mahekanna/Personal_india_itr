@@ -533,34 +533,51 @@ def build_deferrable(tr: TaxReturn, comp: Computation) -> List[DeferrableItem]:
             ))
 
     # ---- Dividends ---------------------------------------------------------
-    for dividend in tr.dividends:
-        if dividend.gross_amount_fx <= 0:
-            continue
-        # The rupee value is already inside other_sources; approximate the
-        # per-payment tax at the average rate.
-        share = (
-            dividend.gross_amount_fx
-            / sum((d.gross_amount_fx for d in tr.dividends), D(0))
-        )
+    # Each receipt carries its own payment date, which is what the proviso
+    # turns on. Indian receipts are already in rupees; foreign ones share out
+    # the converted total in proportion to the amounts declared.
+    domestic_receipts = [
+        d for d in tr.dividends if d.gross_amount_fx > 0 and d.is_domestic
+    ]
+    foreign_receipts = [
+        d for d in tr.dividends if d.gross_amount_fx > 0 and not d.is_domestic
+    ]
+
+    foreign_total_fx = sum((d.gross_amount_fx for d in foreign_receipts), D(0))
+    for dividend in foreign_receipts:
+        share = dividend.gross_amount_fx / foreign_total_fx
+        income = tr.other_sources.foreign_dividend_income * share
         items.append(DeferrableItem(
             kind="dividend",
             label=f"Dividend — {dividend.symbol or 'foreign holding'}",
             arising_on=dividend.pay_date,
-            income=tr.other_sources.foreign_dividend_income * share,
-            tax=tr.other_sources.foreign_dividend_income * share * average_rate,
+            income=income,
+            tax=income * average_rate,
         ))
 
-    domestic_dividend = tr.other_sources.dividend_income
-    if domestic_dividend > 0:
-        # No payment date is captured for domestic dividends, so the relief
-        # cannot be granted — the earliest instalment is assumed, which never
-        # understates the liability.
+    dated_domestic = D(0)
+    for dividend in domestic_receipts:
+        dated_domestic += dividend.gross_amount_fx
+        items.append(DeferrableItem(
+            kind="dividend",
+            label=f"Dividend — {dividend.symbol or 'Indian holding'}",
+            arising_on=dividend.pay_date,
+            income=dividend.gross_amount_fx,
+            tax=dividend.gross_amount_fx * average_rate,
+        ))
+
+    # Anything left in the head that no dated receipt accounts for — a figure
+    # typed straight in, or lifted from the AIS. Without a date the relief
+    # cannot be granted, so the earliest instalment is assumed, which errs
+    # against the taxpayer rather than understating the liability.
+    undated = non_negative(tr.other_sources.dividend_income - dated_domestic)
+    if undated > 0:
         items.append(DeferrableItem(
             kind="dividend",
             label="Dividend income (no payment date recorded)",
             arising_on=_fy_start(comp),
-            income=domestic_dividend,
-            tax=domestic_dividend * average_rate,
+            income=undated,
+            tax=undated * average_rate,
         ))
 
     # ---- Winnings ----------------------------------------------------------

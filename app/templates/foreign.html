@@ -389,6 +389,131 @@
   {% endif %}
 </section>
 
+<!-- ---------------- dividend schedules ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>Dividend schedules</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="dsched">
+      + Add a schedule
+    </button>
+  </div>
+  <p class="hint">
+    Enter the rate per share and each payment is sized from the shares you
+    actually held on that record date — so it grows as tranches vest, as ESPP
+    shares are bought and as dividends are reinvested. A payment already entered
+    below, or imported from a 1099-DIV, always wins.
+  </p>
+
+  <div data-repeat="dsched">
+    {% for schedule in tr.dividend_schedules %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Schedule <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Symbol</label>
+          <input type="text" name="dsched_{{ loop.index0 }}_symbol" value="{{ schedule.symbol }}"></div>
+        <div class="field"><label>Company</label>
+          <input type="text" name="dsched_{{ loop.index0 }}_company_name" value="{{ schedule.company_name }}"></div>
+        <div class="field"><label>Currency</label>
+          <select name="dsched_{{ loop.index0 }}_currency">
+            <option value="USD" {% if schedule.currency == 'USD' %}selected{% endif %}>USD</option>
+            <option value="INR" {% if schedule.currency == 'INR' %}selected{% endif %}>INR</option>
+          </select></div>
+        <div class="field"><label>Frequency</label>
+          <select name="dsched_{{ loop.index0 }}_frequency">
+            {% for code, text in [('quarterly','Quarterly'),('monthly','Monthly'),
+                                  ('semiannual','Every six months'),('annual','Annually')] %}
+            <option value="{{ code }}" {% if schedule.frequency == code %}selected{% endif %}>{{ text }}</option>
+            {% endfor %}
+          </select></div>
+        <div class="field"><label>First payment date</label>
+          <input type="date" name="dsched_{{ loop.index0 }}_first_pay_date" value="{{ schedule.first_pay_date or '' }}"></div>
+        <div class="field"><label>Number of payments</label>
+          <input type="number" step="1" name="dsched_{{ loop.index0 }}_payments" value="{{ schedule.payments }}"></div>
+        <div class="field"><label>Standard rate per share</label>
+          <input type="number" step="0.0001" name="dsched_{{ loop.index0 }}_dividend_per_share_fx" value="{{ schedule.dividend_per_share_fx }}"></div>
+        <div class="field"><label>Days from record date to payment</label>
+          <input type="number" step="1" name="dsched_{{ loop.index0 }}_record_date_lead_days" value="{{ schedule.record_date_lead_days }}"></div>
+        <div class="field"><label>Withholding rate abroad</label>
+          <input type="number" step="0.01" name="dsched_{{ loop.index0 }}_withholding_rate" value="{{ schedule.withholding_rate }}"></div>
+      </div>
+      <div class="field">
+        <label>Rate actually declared, where it differed — one per line, as
+          <code>2025-08-20=0.72</code></label>
+        <textarea name="dsched_{{ loop.index0 }}_declared_rates" rows="3"
+          placeholder="2025-08-20=0.72&#10;2025-11-20=0.75">{% for when, rate in schedule.declared_rates.items() %}{{ when }}={{ rate }}
+{% endfor %}</textarea>
+      </div>
+      <div class="field-inline">
+        <input type="checkbox" id="dr_s{{ loop.index0 }}" name="dsched_{{ loop.index0 }}_reinvested"
+               {% if schedule.reinvested %}checked{% endif %}>
+        <label for="dr_s{{ loop.index0 }}">These payments are reinvested rather than paid out</label>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Schedule <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Symbol</label>
+            <input type="text" name="dsched___INDEX___symbol"></div>
+          <div class="field"><label>Company</label>
+            <input type="text" name="dsched___INDEX___company_name"></div>
+          <div class="field"><label>Currency</label>
+            <select name="dsched___INDEX___currency">
+              <option value="USD">USD</option><option value="INR">INR</option>
+            </select></div>
+          <div class="field"><label>Frequency</label>
+            <select name="dsched___INDEX___frequency">
+              <option value="quarterly">Quarterly</option><option value="monthly">Monthly</option>
+              <option value="semiannual">Every six months</option><option value="annual">Annually</option>
+            </select></div>
+          <div class="field"><label>First payment date</label>
+            <input type="date" name="dsched___INDEX___first_pay_date"></div>
+          <div class="field"><label>Number of payments</label>
+            <input type="number" step="1" name="dsched___INDEX___payments" value="4"></div>
+          <div class="field"><label>Standard rate per share</label>
+            <input type="number" step="0.0001" name="dsched___INDEX___dividend_per_share_fx" value="0"></div>
+          <div class="field"><label>Days from record date to payment</label>
+            <input type="number" step="1" name="dsched___INDEX___record_date_lead_days" value="14"></div>
+          <div class="field"><label>Withholding rate abroad</label>
+            <input type="number" step="0.01" name="dsched___INDEX___withholding_rate" value="0.25"></div>
+        </div>
+        <div class="field">
+          <label>Rate actually declared, where it differed — one per line, as
+            <code>2025-08-20=0.72</code></label>
+          <textarea name="dsched___INDEX___declared_rates" rows="3"></textarea>
+        </div>
+        <div class="field-inline">
+          <input type="checkbox" name="dsched___INDEX___reinvested">
+          <label>These payments are reinvested rather than paid out</label>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <h3 style="margin-top:1rem">Interest on money borrowed to buy the shares</h3>
+  <p class="hint">
+    The proviso to section 57(i) allows it against dividend income, but only up
+    to 20% of that income — and nothing else is deductible, not demat charges,
+    not advisory fees. Enter what you actually paid; the cap is applied for you.
+  </p>
+  <div class="grid grid-3">
+    <div class="field">
+      <label for="dividend_interest_expense">Interest paid in the year</label>
+      <input type="number" step="1" id="dividend_interest_expense"
+             name="dividend_interest_expense"
+             value="{{ tr.other_sources.dividend_interest_expense }}">
+    </div>
+  </div>
+</section>
+
 <!-- ---------------- dividends ---------------- -->
 <section class="card">
   <div class="card-head">
@@ -414,12 +539,25 @@
       <div class="grid grid-4">
         <div class="field"><label>Symbol</label>
           <input type="text" name="div_{{ loop.index0 }}_symbol" value="{{ dividend.symbol }}"></div>
+        <div class="field"><label>Currency</label>
+          <select name="div_{{ loop.index0 }}_currency">
+            <option value="USD" {% if dividend.currency == 'USD' %}selected{% endif %}>USD — foreign</option>
+            <option value="INR" {% if dividend.currency == 'INR' %}selected{% endif %}>INR — Indian company or fund</option>
+            <option value="EUR" {% if dividend.currency == 'EUR' %}selected{% endif %}>EUR</option>
+            <option value="GBP" {% if dividend.currency == 'GBP' %}selected{% endif %}>GBP</option>
+          </select></div>
+        <div class="field"><label>Record date</label>
+          <input type="date" name="div_{{ loop.index0 }}_record_date" value="{{ dividend.record_date or '' }}"></div>
         <div class="field"><label>Payment date</label>
           <input type="date" name="div_{{ loop.index0 }}_pay_date" value="{{ dividend.pay_date or '' }}"></div>
         <div class="field"><label>Gross amount ({{ dividend.currency }})</label>
           <input type="number" step="0.01" name="div_{{ loop.index0 }}_gross_amount_fx" value="{{ dividend.gross_amount_fx }}"></div>
+        <div class="field"><label>Rate per share (lets it be checked)</label>
+          <input type="number" step="0.0001" name="div_{{ loop.index0 }}_dividend_per_share_fx" value="{{ dividend.dividend_per_share_fx }}"></div>
         <div class="field"><label>Tax withheld abroad</label>
           <input type="number" step="0.01" name="div_{{ loop.index0 }}_foreign_tax_withheld_fx" value="{{ dividend.foreign_tax_withheld_fx }}"></div>
+        <div class="field"><label>TDS in India — s.194 / 194K</label>
+          <input type="number" step="0.01" name="div_{{ loop.index0 }}_tds_deducted" value="{{ dividend.tds_deducted }}"></div>
         <div class="field"><label>Shares bought by reinvestment</label>
           <input type="number" step="0.0001" name="div_{{ loop.index0 }}_shares_acquired" value="{{ dividend.shares_acquired }}"></div>
         <div class="field"><label>Reinvestment price per share</label>
@@ -442,12 +580,24 @@
         <div class="grid grid-4">
           <div class="field"><label>Symbol</label>
             <input type="text" name="div___INDEX___symbol"></div>
+          <div class="field"><label>Currency</label>
+            <select name="div___INDEX___currency">
+              <option value="USD">USD — foreign</option>
+              <option value="INR">INR — Indian company or fund</option>
+              <option value="EUR">EUR</option><option value="GBP">GBP</option>
+            </select></div>
+          <div class="field"><label>Record date</label>
+            <input type="date" name="div___INDEX___record_date"></div>
           <div class="field"><label>Payment date</label>
             <input type="date" name="div___INDEX___pay_date"></div>
-          <div class="field"><label>Gross amount (USD)</label>
+          <div class="field"><label>Gross amount</label>
             <input type="number" step="0.01" name="div___INDEX___gross_amount_fx" value="0"></div>
+          <div class="field"><label>Rate per share (lets it be checked)</label>
+            <input type="number" step="0.0001" name="div___INDEX___dividend_per_share_fx" value="0"></div>
           <div class="field"><label>Tax withheld abroad</label>
             <input type="number" step="0.01" name="div___INDEX___foreign_tax_withheld_fx" value="0"></div>
+          <div class="field"><label>TDS in India — s.194 / 194K</label>
+            <input type="number" step="0.01" name="div___INDEX___tds_deducted" value="0"></div>
           <div class="field"><label>Shares bought by reinvestment</label>
             <input type="number" step="0.0001" name="div___INDEX___shares_acquired" value="0"></div>
           <div class="field"><label>Reinvestment price per share</label>
@@ -462,11 +612,53 @@
   </div>
 
   {% if foreign.dividends.lines %}
+  <h3 style="margin-top:1rem">Every payment, against the position held</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Paid</th><th>Symbol</th><th class="num">Held on record date</th>
+               <th class="num">Rate/share</th><th class="num">Gross</th>
+               <th class="num">Withheld / TDS</th><th class="num">In rupees</th></tr></thead>
+    <tbody>
+      {% for line in foreign.dividends.lines %}
+      <tr>
+        <td>{{ line.receipt.pay_date }}
+          {% if line.receipt.source_document.startswith('Dividend schedule') %}
+          <div class="doc-meta">from your schedule</div>{% endif %}
+        </td>
+        <td>{{ line.receipt.symbol }}
+          {% if line.is_domestic %}<span class="pill pill-quiet">Indian</span>{% endif %}
+        </td>
+        <td class="num">
+          {% if line.shares_on_record_date is not none %}
+            {{ '%.2f' % line.shares_on_record_date }}
+            {% if line.implied_shares %}
+            <div class="doc-meta">declared implies {{ '%.2f' % line.implied_shares }}</div>
+            {% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="num">{{ line.receipt.dividend_per_share_fx or '—' }}</td>
+        <td class="num">{{ line.receipt.currency }} {{ '%.2f' % line.receipt.gross_amount_fx }}</td>
+        <td class="num">
+          {% if line.is_domestic %}{{ line.receipt.tds_deducted | inr }}
+          {% else %}{{ line.foreign_tax_inr | inr }}{% endif %}
+        </td>
+        <td class="num">{{ line.gross_inr | inr }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
   <div class="grid grid-3" style="margin-top:1rem">
     <div class="stat">
       <div class="stat-label">Gross dividend income</div>
       <div class="stat-value" style="font-size:1.15rem">₹{{ foreign.dividends.total_gross_inr | inr }}</div>
       <div class="stat-note">taxed at slab rates under Other Sources</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Indian dividends</div>
+      <div class="stat-value" style="font-size:1.15rem">₹{{ foreign.dividends.total_domestic_inr | inr }}</div>
+      <div class="stat-note">TDS u/s 194 ₹{{ foreign.dividends.total_tds_194 | inr }}</div>
     </div>
     <div class="stat">
       <div class="stat-label">Tax withheld abroad</div>

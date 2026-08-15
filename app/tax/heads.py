@@ -505,8 +505,16 @@ def compute_other_sources(
         lines.append(Line("Less: deduction u/s 57(iia)", -deduction))
         total += src.family_pension - deduction
 
-    if src.section_57_deductions and regime.key == "old":
-        lines.append(Line("Less: expenses u/s 57", -src.section_57_deductions))
+    if src.section_57_deductions:
+        # Section 115BAC(2) restricts only clause (iia) of section 57, the
+        # family-pension deduction, which is handled above. Clause (i) —
+        # interest on money borrowed to earn the income — survives in both
+        # regimes.
+        lines.append(
+            Line("Less: expenses u/s 57", -src.section_57_deductions,
+                 note="Interest on borrowed capital, capped at 20% of the "
+                      "dividend income by the proviso to section 57(i)")
+        )
         total -= src.section_57_deductions
 
     winnings = src.winnings_115bb

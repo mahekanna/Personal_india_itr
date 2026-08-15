@@ -39,15 +39,16 @@ from .schemas import (
     BankAccount,
     CapitalGainItem,
     DividendReceipt,
-    ForeignHolding,
+    DividendSchedule,
     ESPPPurchase,
+    ForeignHolding,
     ForeignSale,
     HouseProperty,
     RSUVest,
     SalaryIncome,
-    VestingSchedule,
     TaxPayment,
     TaxReturn,
+    VestingSchedule,
 )
 from .tax.engine import compare_regimes, compute
 from .tax.rules import ASSESSMENT_YEARS, CURRENT_AY, get_ay
@@ -416,6 +417,10 @@ async def save_foreign(
     tr.rsu_vests = _collect_vests(raw)
     tr.espp_purchases = _collect_espp(raw)
     tr.dividends = _collect_dividends(raw)
+    tr.dividend_schedules = _collect_dividend_schedules(raw)
+    tr.other_sources.dividend_interest_expense = D(
+        form.get("dividend_interest_expense", 0)
+    )
     tr.foreign_sales = _collect_foreign_sales(raw)
     tr.foreign_holdings = _collect_holdings(raw)
 
@@ -532,6 +537,39 @@ def _collect_dividends(form) -> List[DividendReceipt]:
             is_reinvested=row.get("is_reinvested") == "on",
             shares_acquired=D(row.get("shares_acquired", 0)),
             reinvest_price_per_share_fx=D(row.get("reinvest_price_per_share_fx", 0)),
+            record_date=_parse_iso_date(row.get("record_date", "")),
+            dividend_per_share_fx=D(row.get("dividend_per_share_fx", 0)),
+            tds_deducted=D(row.get("tds_deducted", 0)),
+        ))
+    return out
+
+
+def _collect_dividend_schedules(form) -> List[DividendSchedule]:
+    out: List[DividendSchedule] = []
+    for row in _indexed(form, "dsched"):
+        symbol = row.get("symbol", "").upper()
+        if not symbol:
+            continue
+        declared: Dict[str, str] = {}
+        for line in (row.get("declared_rates", "") or "").splitlines():
+            if "=" not in line:
+                continue
+            when, _, rate = line.partition("=")
+            when, rate = when.strip(), rate.strip()
+            if when and rate:
+                declared[when] = rate
+        out.append(DividendSchedule(
+            symbol=symbol,
+            company_name=row.get("company_name", ""),
+            currency=row.get("currency", "USD") or "USD",
+            frequency=row.get("frequency", "quarterly") or "quarterly",
+            first_pay_date=_parse_iso_date(row.get("first_pay_date", "")),
+            payments=int(D(row.get("payments", 0)) or 4),
+            dividend_per_share_fx=D(row.get("dividend_per_share_fx", 0)),
+            record_date_lead_days=int(D(row.get("record_date_lead_days", 0)) or 14),
+            withholding_rate=D(row.get("withholding_rate", "0.25")),
+            reinvested=row.get("reinvested") == "on",
+            declared_rates=declared,
         ))
     return out
 

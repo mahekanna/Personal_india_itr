@@ -198,9 +198,12 @@ class OtherSourcesIncome(_Base):
     winnings_115bb: Money = D(0)           # flat 30%, no deduction, no rebate
     gifts_taxable: Money = D(0)
     other_income: Money = D(0)
-    # Section 57 expenses against other-sources income (old regime only,
-    # except the family-pension deduction which the engine handles separately).
+    # Section 57 expenses against other-sources income.
     section_57_deductions: Money = D(0)
+    # Interest on money borrowed to buy the shares or units. Deductible against
+    # dividend income under the proviso to section 57(i), but only up to 20% of
+    # it — the engine applies the cap, so enter what you actually paid.
+    dividend_interest_expense: Money = D(0)
 
 
 class ExemptIncome(_Base):
@@ -359,8 +362,18 @@ class DividendReceipt(_Base):
     symbol: str = ""
     company_name: str = ""
     pay_date: Optional[date] = None
+    # The date that fixes who is entitled. Used to check the payment against
+    # the position actually held, which is not the position held today.
+    record_date: Optional[date] = None
     gross_amount_fx: Money = D(0)
+    # Rate per share as declared. With it, the payment can be reconciled
+    # against the holdings ledger; without it, it has to be taken on trust.
+    dividend_per_share_fx: Money = D(0)
+    shares_held: Money = D(0)
     foreign_tax_withheld_fx: Money = D(0)
+    # TDS deducted in India under section 194 (shares) or 194K (mutual funds).
+    # Domestic dividends only; it becomes a tax credit, not a foreign one.
+    tds_deducted: Money = D(0)
     currency: str = "USD"
     country_code: str = "2"
     # Dividend reinvestment: the payment bought more shares instead of cash.
@@ -373,6 +386,47 @@ class DividendReceipt(_Base):
     @property
     def net_amount_fx(self) -> Money:
         return self.gross_amount_fx - self.foreign_tax_withheld_fx
+
+    @property
+    def is_domestic(self) -> bool:
+        """An Indian dividend needs no currency conversion and no credit."""
+        return self.currency.upper() == "INR"
+
+    @property
+    def implied_shares(self) -> Money:
+        """Shares the payment implies, where a per-share rate is known."""
+        if self.dividend_per_share_fx <= 0:
+            return D(0)
+        return self.gross_amount_fx / self.dividend_per_share_fx
+
+
+class DividendSchedule(_Base):
+    """A regular dividend, applied to whatever was actually held.
+
+    A holding that grows every quarter as tranches vest — and again whenever a
+    dividend is reinvested — pays a different amount every time. Entering the
+    declared rate per share once and letting it meet the holdings ledger is
+    both less work and harder to get wrong than typing each payment.
+    """
+
+    symbol: str = ""
+    company_name: str = ""
+    currency: str = "USD"
+    country_code: str = "2"
+    frequency: Literal["monthly", "quarterly", "semiannual", "annual"] = "quarterly"
+    first_pay_date: Optional[date] = None
+    payments: int = 4
+    dividend_per_share_fx: Money = D(0)
+    # Rate per share for specific pay dates, keyed "YYYY-MM-DD", where it
+    # differed from the standard rate. A dated entry makes that payment real
+    # rather than an estimate.
+    declared_rates: Dict[str, Money] = Field(default_factory=dict)
+    # Days between the record date and the pay date. The record date is what
+    # decides entitlement, and it is usually a couple of weeks earlier.
+    record_date_lead_days: int = 14
+    # Whether payments are reinvested rather than paid out.
+    reinvested: bool = False
+    withholding_rate: Money = D("0.25")
 
 
 class ForeignAsset(_Base):
@@ -623,6 +677,7 @@ class TaxReturn(_Base):
     espp_purchases: List[ESPPPurchase] = Field(default_factory=list)
     vesting_schedules: List[VestingSchedule] = Field(default_factory=list)
     dividends: List[DividendReceipt] = Field(default_factory=list)
+    dividend_schedules: List[DividendSchedule] = Field(default_factory=list)
     foreign_assets: List[ForeignAsset] = Field(default_factory=list)
     foreign_taxes: List[ForeignTaxPayment] = Field(default_factory=list)
     foreign_holdings: List[ForeignHolding] = Field(default_factory=list)

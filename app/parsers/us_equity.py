@@ -72,6 +72,17 @@ _ALIASES: Dict[str, Tuple[str, ...]] = {
         "foreign tax paid", "nra withholding", "us tax withheld",
         "federal tax withheld", "backup withholding",
     ),
+    "record_date": (
+        "record date", "date of record", "ex-date", "ex dividend date",
+        "ex-dividend date",
+    ),
+    "dividend_rate": (
+        "rate per share", "dividend per share", "dividend rate", "rate",
+        "amount per share", "per share amount", "dps",
+    ),
+    "shares_at_record": (
+        "shares held", "shares owned", "position", "holding", "share balance",
+    ),
     "reinvest_shares": (
         "shares purchased", "reinvested shares", "shares acquired",
         "units purchased", "quantity purchased", "shares reinvested",
@@ -466,6 +477,9 @@ def _read_dividends(frame, mapping, out: Extraction, filename: str) -> None:
         out.dividends.append({
             "symbol": _clean_symbol(symbol),
             "pay_date": pay_date,
+            "record_date": parse_date(_cell(row, mapping, "record_date")),
+            "dividend_per_share_fx": _money(row, mapping, "dividend_rate"),
+            "shares_held": _money(row, mapping, "shares_at_record"),
             "gross_amount_fx": gross,
             "foreign_tax_withheld_fx": abs(_money(row, mapping, "tax_withheld")),
             "currency": "USD",
