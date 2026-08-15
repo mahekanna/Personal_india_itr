@@ -18,6 +18,7 @@ from ..money import D
 from ..schemas import ForeignTaxPayment, TaxReturn
 from . import dividends as dividend_module
 from . import rsu as rsu_module
+from . import vesting as vesting_module
 from .forex import ForexTable
 from .schedule_fa import ScheduleFAResult, build_schedule_fa
 
@@ -38,6 +39,8 @@ class ForeignResult:
     capital_gain_items: List = field(default_factory=list)
     foreign_tax_payments: List[ForeignTaxPayment] = field(default_factory=list)
     perquisite_added_to_salary: Decimal = D(0)
+    # Tranches generated from a vesting schedule that have not vested yet.
+    projected_vests: List = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
     @property
@@ -48,19 +51,54 @@ class ForeignResult:
         )
 
 
-def apply_foreign(tr: TaxReturn) -> tuple[TaxReturn, ForeignResult]:
+def apply_foreign(
+    tr: TaxReturn, include_projected: bool = False
+) -> tuple[TaxReturn, ForeignResult]:
     """Fold foreign records into a copy of the return.
 
     The original is left alone, so the user's own entries are never rewritten
     by a re-run and the wizard can show both the raw records and their effect.
+
+    ``include_projected`` brings in tranches that have not vested yet and sales
+    the user only intends to make. That is right for the advance-tax planner and
+    wrong for everything else: a projection must never reach the return or the
+    ITR JSON.
     """
     result = ForeignResult()
     if not (tr.rsu_vests or tr.dividends or tr.foreign_sales
-            or tr.foreign_holdings):
+            or tr.foreign_holdings or tr.vesting_schedules):
         return tr, result
 
     working = deepcopy(tr)
     forex = ForexTable(tr.foreign_settings.forex_overrides)
+
+    # -- 0. Expand any vesting schedules into individual tranches -----------
+    if working.vesting_schedules:
+        from ..tax.rules import get_ay
+
+        ay = get_ay(working.assessment_year)
+        expansion = vesting_module.expand_all(
+            working, window=(ay.fy_start, ay.fy_end)
+        )
+        result.warnings.extend(expansion.warnings)
+
+        # A four-year grant produces tranches into the 2029 financial year.
+        # Only the ones falling inside the year being computed belong here;
+        # the rest are next year's problem, and next year's return.
+        in_year = vesting_module.vests_in_year(
+            expansion.vests, ay.fy_start, ay.fy_end
+        )
+        result.projected_vests = [v for v in in_year if v.is_projected]
+        working.rsu_vests.extend([v for v in in_year if not v.is_projected])
+        if include_projected:
+            working.rsu_vests.extend(result.projected_vests)
+
+    # Projections are stripped unless this is a planning run.
+    if not include_projected:
+        working.rsu_vests = [v for v in working.rsu_vests if not v.is_projected]
+        working.foreign_sales = [
+            s for s in working.foreign_sales if not s.is_projected
+        ]
 
     # -- 1. Vesting: salary perquisite, and the lots it creates -------------
     vests = rsu_module.compute_vests(working, forex)

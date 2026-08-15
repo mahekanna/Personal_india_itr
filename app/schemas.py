@@ -256,6 +256,10 @@ class RSUVest(_Base):
     # the perquisite is not added to salary a second time.
     included_in_form16: bool = True
     source_document: str = ""
+    # A vest that has not happened yet, generated from a vesting schedule. It
+    # feeds the advance-tax planner and never the return itself.
+    is_projected: bool = False
+    grant_reference: str = ""
 
     @property
     def gross_value_fx(self) -> Money:
@@ -362,6 +366,40 @@ class ForeignSale(_Base):
     currency: str = "USD"
     country_code: str = "2"
     source_document: str = ""
+    # A sale you intend to make. Used for advance-tax planning only.
+    is_projected: bool = False
+
+
+class VestingSchedule(_Base):
+    """A grant that vests in tranches, expanded into individual vests.
+
+    A four-year grant vesting quarterly is sixteen separate salary events, each
+    at its own fair market value and its own Rule 115 exchange rate, and each
+    starting its own 24-month capital-gains clock. Entering sixteen rows by hand
+    every year is how mistakes get in.
+    """
+
+    grant_id: str = ""
+    symbol: str = ""
+    company_name: str = ""
+    grant_date: Optional[date] = None
+    total_shares: Money = D(0)
+    frequency: Literal["monthly", "quarterly", "semiannual", "annual"] = "quarterly"
+    first_vest_date: Optional[date] = None
+    tranches: int = 16
+    # A cliff tranche vests a larger slice on the first date — typically 25% of
+    # a four-year grant after twelve months.
+    cliff_shares: Money = D(0)
+    currency: str = "USD"
+    country_code: str = "2"
+    # Used for tranches with no actual price on file. Projections only.
+    estimated_fmv_per_share_fx: Money = D(0)
+    # Actual fair market value per vest date, keyed "YYYY-MM-DD". Anything here
+    # makes that tranche real rather than projected.
+    actual_fmv: Dict[str, Money] = Field(default_factory=dict)
+    # Fraction of each tranche the broker sells to fund withholding.
+    sell_to_cover_fraction: Money = D("0.31")
+    included_in_form16: bool = True
 
 
 class ForeignHolding(_Base):
@@ -507,6 +545,7 @@ class TaxReturn(_Base):
 
     # -- Foreign equity ----------------------------------------------------
     rsu_vests: List[RSUVest] = Field(default_factory=list)
+    vesting_schedules: List[VestingSchedule] = Field(default_factory=list)
     dividends: List[DividendReceipt] = Field(default_factory=list)
     foreign_assets: List[ForeignAsset] = Field(default_factory=list)
     foreign_taxes: List[ForeignTaxPayment] = Field(default_factory=list)

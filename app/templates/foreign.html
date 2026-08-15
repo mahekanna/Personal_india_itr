@@ -21,10 +21,129 @@
 
 <form method="post" action="/returns/{{ record.id }}/foreign">
 
+<!-- ---------------- vesting schedule ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>Vesting schedules</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="sched">
+      + Add a grant
+    </button>
+  </div>
+  <p class="hint">
+    Describe a grant once and every tranche is generated from it. A four-year
+    grant vesting quarterly is sixteen separate salary events, each at its own
+    price, its own Rule 115 exchange rate and its own 24-month clock — which is
+    a lot to type correctly sixteen times.
+  </p>
+  <p class="hint">
+    Tranches with an actual price go into the return. Tranches still to come are
+    valued at your estimate and used <strong>only</strong> for the
+    <a href="/returns/{{ record.id }}/planner">advance-tax plan</a>.
+  </p>
+
+  <div data-repeat="sched">
+    {% for schedule in tr.vesting_schedules %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Grant <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Symbol</label>
+          <input type="text" name="sched_{{ loop.index0 }}_symbol" value="{{ schedule.symbol }}"></div>
+        <div class="field"><label>Grant number</label>
+          <input type="text" name="sched_{{ loop.index0 }}_grant_id" value="{{ schedule.grant_id }}"></div>
+        <div class="field"><label>Grant date</label>
+          <input type="date" name="sched_{{ loop.index0 }}_grant_date" value="{{ schedule.grant_date or '' }}"></div>
+        <div class="field"><label>Total shares granted</label>
+          <input type="number" step="0.0001" name="sched_{{ loop.index0 }}_total_shares" value="{{ schedule.total_shares }}"></div>
+        <div class="field"><label>Frequency</label>
+          <select name="sched_{{ loop.index0 }}_frequency">
+            {% for code, text in [('quarterly','Quarterly'),('monthly','Monthly'),
+                                  ('semiannual','Every six months'),('annual','Annually')] %}
+            <option value="{{ code }}" {% if schedule.frequency == code %}selected{% endif %}>{{ text }}</option>
+            {% endfor %}
+          </select></div>
+        <div class="field"><label>First vest date</label>
+          <input type="date" name="sched_{{ loop.index0 }}_first_vest_date" value="{{ schedule.first_vest_date or '' }}"></div>
+        <div class="field"><label>Number of tranches</label>
+          <input type="number" step="1" name="sched_{{ loop.index0 }}_tranches" value="{{ schedule.tranches }}"></div>
+        <div class="field"><label>Cliff shares (first tranche, if larger)</label>
+          <input type="number" step="0.0001" name="sched_{{ loop.index0 }}_cliff_shares" value="{{ schedule.cliff_shares }}"></div>
+        <div class="field"><label>Estimated price for future tranches</label>
+          <input type="number" step="0.01" name="sched_{{ loop.index0 }}_estimated_fmv_per_share_fx" value="{{ schedule.estimated_fmv_per_share_fx }}"></div>
+        <div class="field"><label>Fraction sold to cover tax</label>
+          <input type="number" step="0.01" name="sched_{{ loop.index0 }}_sell_to_cover_fraction" value="{{ schedule.sell_to_cover_fraction }}"></div>
+      </div>
+      <div class="field">
+        <label>Actual price on each vest date — one per line, as
+          <code>2025-09-15=150.00</code></label>
+        <textarea name="sched_{{ loop.index0 }}_actual_fmv" rows="4"
+          placeholder="2025-09-15=150.00&#10;2025-12-15=162.30">{% for when, price in schedule.actual_fmv.items() %}{{ when }}={{ price }}
+{% endfor %}</textarea>
+      </div>
+      <div class="field-inline">
+        <input type="checkbox" id="s16_{{ loop.index0 }}" name="sched_{{ loop.index0 }}_included_in_form16"
+               {% if schedule.included_in_form16 %}checked{% endif %}>
+        <label for="s16_{{ loop.index0 }}">
+          My employer puts these vests through payroll, so they are in my Form 16
+        </label>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Grant <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Symbol</label>
+            <input type="text" name="sched___INDEX___symbol"></div>
+          <div class="field"><label>Grant number</label>
+            <input type="text" name="sched___INDEX___grant_id"></div>
+          <div class="field"><label>Grant date</label>
+            <input type="date" name="sched___INDEX___grant_date"></div>
+          <div class="field"><label>Total shares granted</label>
+            <input type="number" step="0.0001" name="sched___INDEX___total_shares" value="0"></div>
+          <div class="field"><label>Frequency</label>
+            <select name="sched___INDEX___frequency">
+              <option value="quarterly">Quarterly</option>
+              <option value="monthly">Monthly</option>
+              <option value="semiannual">Every six months</option>
+              <option value="annual">Annually</option>
+            </select></div>
+          <div class="field"><label>First vest date</label>
+            <input type="date" name="sched___INDEX___first_vest_date"></div>
+          <div class="field"><label>Number of tranches</label>
+            <input type="number" step="1" name="sched___INDEX___tranches" value="16"></div>
+          <div class="field"><label>Cliff shares (first tranche, if larger)</label>
+            <input type="number" step="0.0001" name="sched___INDEX___cliff_shares" value="0"></div>
+          <div class="field"><label>Estimated price for future tranches</label>
+            <input type="number" step="0.01" name="sched___INDEX___estimated_fmv_per_share_fx" value="0"></div>
+          <div class="field"><label>Fraction sold to cover tax</label>
+            <input type="number" step="0.01" name="sched___INDEX___sell_to_cover_fraction" value="0.31"></div>
+        </div>
+        <div class="field">
+          <label>Actual price on each vest date — one per line, as
+            <code>2025-09-15=150.00</code></label>
+          <textarea name="sched___INDEX___actual_fmv" rows="4"
+            placeholder="2025-09-15=150.00"></textarea>
+        </div>
+        <div class="field-inline">
+          <input type="checkbox" name="sched___INDEX___included_in_form16" checked>
+          <label>My employer puts these vests through payroll, so they are in my Form 16</label>
+        </div>
+      </div>
+    </template>
+  </div>
+</section>
+
 <!-- ---------------- vesting ---------------- -->
 <section class="card">
   <div class="card-head">
-    <h2>RSU and ESPP vesting</h2>
+    <h2>Individual vests</h2>
     <button class="btn btn-quiet btn-small" type="button" data-repeat-add="vest">
       + Add a vest
     </button>
@@ -554,6 +673,7 @@
 
 <div class="actions">
   <button class="btn" type="submit">Save and compare the regimes →</button>
+  <a class="btn btn-quiet" href="/returns/{{ record.id }}/planner">Advance tax plan</a>
   <a class="btn btn-quiet" href="/returns/{{ record.id }}/income">Back to income</a>
 </div>
 

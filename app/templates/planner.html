@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}Advance tax · Personal India ITR{% endblock %}
+{% block content %}
+
+{% set plan = planner.plan %}
+
+<h1>Advance tax — FY {{ plan.financial_year }}</h1>
+<p class="lede">
+  What to pay, by when, and what it costs to be late. Capital gains and
+  dividends are held back to the quarter they actually arose in, as the proviso
+  to section 234C allows — so a December share sale is not treated as something
+  you should have paid tax on in June.
+</p>
+
+{% if not plan.liable %}
+<section class="card">
+  <div class="note note-info"><strong>No advance tax is payable</strong>
+    {{ plan.exemption_reason }}</div>
+</section>
+{% else %}
+
+<!-- ---------------- headline ---------------- -->
+<div class="grid grid-4">
+  <div class="stat {% if planner.pay_now > 0 %}stat-danger{% else %}stat-accent{% endif %}">
+    <div class="stat-label">Pay by {{ planner.next_due.strftime('%d %b %Y') if planner.next_due else '31 March' }}</div>
+    <div class="stat-value" style="font-size:1.3rem">₹{{ planner.pay_now | inr }}</div>
+    <div class="stat-note">
+      {% if planner.pay_now > 0 %}to clear the next instalment{% else %}nothing outstanding{% endif %}
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Tax for the year</div>
+    <div class="stat-value" style="font-size:1.15rem">₹{{ plan.total_tax_liability | inr }}</div>
+    <div class="stat-note">less TDS of ₹{{ plan.tds_and_tcs | inr }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Advance tax payable</div>
+    <div class="stat-value" style="font-size:1.15rem">₹{{ plan.assessed_tax | inr }}</div>
+    <div class="stat-note">paid so far ₹{{ plan.paid_to_date | inr }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Interest exposure u/s 234C</div>
+    <div class="stat-value" style="font-size:1.15rem">₹{{ plan.interest_234c | inr }}</div>
+    <div class="stat-note">
+      {% if plan.interest_waived_by_proviso > 0 %}
+        ₹{{ plan.interest_waived_by_proviso | inr }} avoided by the proviso
+      {% else %}on current payments{% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ---------------- how the liability splits ---------------- -->
+<section class="card" style="margin-top:1rem">
+  <div class="card-head"><h2>How the liability splits</h2></div>
+  <div class="grid grid-2">
+    <div>
+      <table>
+        <tbody>
+          <tr><td>Regular income — salary, interest, rent
+            <div class="doc-meta">Follows the plain 15 / 45 / 75 / 100 schedule</div>
+          </td><td class="num">{{ plan.regular_tax | inr }}</td></tr>
+          <tr><td>Capital gains and dividends
+            <div class="doc-meta">Due only from the quarter the income arose in</div>
+          </td><td class="num">{{ plan.deferrable_tax | inr }}</td></tr>
+          <tr class="row-total"><td>Advance tax for the year</td>
+              <td class="num">{{ plan.assessed_tax | inr }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="note note-info">
+        <strong>Why the split matters</strong>
+        The first proviso to section 234C excuses the instalments that fell due
+        <em>before</em> a capital gain or dividend arose. The trade is that the
+        whole of the tax on it is then due at the very next instalment, not the
+        usual fraction. Miss that one and the relief is lost for every earlier
+        quarter too.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ---------------- the four quarters ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>The four instalments</h2>
+    <span class="hint" style="margin:0">As at {{ as_of.strftime('%d %B %Y') }}</span>
+  </div>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Instalment</th><th>Due</th><th class="num">Cumulative</th>
+          <th class="num">Required</th><th class="num">Paid by then</th>
+          <th class="num">Short</th><th class="num">234C</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for q in planner.quarters %}
+      <tr>
+        <td><strong>{{ q.label }}</strong>
+          <div class="doc-meta">{{ q.window }}</div>
+          {% for event in q.events %}
+          <div class="doc-meta">· {{ event }}</div>
+          {% endfor %}
+        </td>
+        <td>{{ q.due_date.strftime('%d %b %Y') }}</td>
+        <td class="num">{{ q.cumulative_pct }}</td>
+        <td class="num">{{ q.required | inr }}</td>
+        <td class="num">{{ q.paid | inr }}</td>
+        <td class="num">{{ q.shortfall | inr }}</td>
+        <td class="num">{{ q.interest | inr }}</td>
+        <td>
+          {% if q.status == 'met' %}<span class="pill">Met</span>
+          {% elif q.status == 'missed' %}<span class="pill" style="background:var(--danger-soft); color:var(--danger)">Short</span>
+          {% elif q.status == 'due' %}<span class="pill" style="background:var(--warn-soft); color:var(--warn)">Due next</span>
+          {% else %}<span class="pill pill-quiet">Upcoming</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ---------------- pay ---------------- -->
+<div class="grid grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Paying it</h2></div>
+    <table>
+      <tbody>
+        <tr><td>Where</td><td class="num">{{ challan.where }}</td></tr>
+        <tr><td>Challan</td><td class="num">{{ challan.form }}</td></tr>
+        <tr><td>Major head</td><td class="num">{{ challan.major_head }}</td></tr>
+        <tr><td>Minor head</td><td class="num">{{ challan.minor_head_advance }}</td></tr>
+        <tr><td>Assessment year</td><td class="num">{{ plan.assessment_year }}</td></tr>
+        <tr class="row-total"><td>Amount</td><td class="num">₹{{ challan.amount }}</td></tr>
+        <tr><td>By</td><td class="num">{{ challan.by }}</td></tr>
+      </tbody>
+    </table>
+    <div class="note" style="margin-top:.8rem">{{ challan.after }}</div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Record a payment</h2></div>
+    <p class="hint">
+      Log the challan here and the next quarter's plan accounts for it. The BSR
+      code and serial number go on the return, and the credit is not matched
+      without them.
+    </p>
+    <form method="post" action="/returns/{{ record.id }}/planner/payment">
+      <div class="grid grid-2">
+        <div class="field"><label for="amount">Amount paid</label>
+          <input type="number" step="1" id="amount" name="amount"
+                 value="{{ planner.pay_now }}"></div>
+        <div class="field"><label for="payment_date">Date of payment</label>
+          <input type="date" id="payment_date" name="payment_date"
+                 value="{{ as_of }}"></div>
+        <div class="field"><label for="bsr_code">BSR code</label>
+          <input type="text" id="bsr_code" name="bsr_code" maxlength="7"></div>
+        <div class="field"><label for="challan_serial">Challan serial number</label>
+          <input type="text" id="challan_serial" name="challan_serial"></div>
+      </div>
+      <button class="btn" type="submit">Record it</button>
+    </form>
+  </section>
+</div>
+
+<!-- ---------------- vesting calendar ---------------- -->
+{% if schedules %}
+<section class="card">
+  <div class="card-head"><h2>Vesting calendar</h2></div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Grant</th><th>Frequency</th><th class="num">Total shares</th>
+               <th>First vest</th><th class="num">Tranches</th>
+               <th class="num">Estimated price</th></tr></thead>
+    <tbody>
+      {% for schedule in schedules %}
+      <tr>
+        <td><strong>{{ schedule.symbol }}</strong>
+          <div class="doc-meta">{{ schedule.grant_id }}</div></td>
+        <td>{{ schedule.frequency }}</td>
+        <td class="num">{{ schedule.total_shares }}</td>
+        <td>{{ schedule.first_vest_date }}</td>
+        <td class="num">{{ schedule.tranches }}</td>
+        <td class="num">{{ schedule.currency }} {{ schedule.estimated_fmv_per_share_fx }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if planner.has_projections %}
+  <div class="note note-warning" style="margin-top:.8rem">
+    <strong>₹{{ planner.projected_vest_value | inr }} of this year's vesting has not happened yet</strong>
+    It is valued at your estimated price so the instalments are not understated.
+    None of it reaches the return — go back to the
+    <a href="/returns/{{ record.id }}/foreign">Foreign income page</a> and enter
+    the actual price once each tranche vests.
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+<!-- ---------------- notes ---------------- -->
+{% if planner.warnings %}
+<section class="card">
+  <div class="card-head"><h2>Worth knowing</h2></div>
+  {% for note in planner.warnings %}
+  <div class="note">{{ note }}</div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% endif %}
+
+<div class="actions">
+  <a class="btn btn-quiet" href="/returns/{{ record.id }}/foreign">Foreign income and vesting</a>
+  <a class="btn btn-quiet" href="/returns/{{ record.id }}/compare">Regime comparison</a>
+  <a class="btn btn-quiet" href="/">All returns</a>
+</div>
+
+{% endblock %}

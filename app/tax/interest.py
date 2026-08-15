@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import List, Optional, Tuple
 
 from ..money import D, non_negative, rupees
+from .advance_tax import DeferrableItem, section_234c
 from .rules import AssessmentYear
 
 
@@ -63,6 +64,7 @@ def compute_interest_and_fee(
     is_audit_case: bool = False,
     has_only_pension_or_no_business: bool = False,
     is_senior_citizen: bool = False,
+    deferrable: Optional[List[DeferrableItem]] = None,
 ) -> InterestResult:
     result = InterestResult()
     due_date = ay.due_date_audit if is_audit_case else ay.due_date_non_audit
@@ -130,44 +132,12 @@ def compute_interest_and_fee(
         )
 
     # ---- Section 234C: deferment of instalments ---------------------------
-    result.section_234c = _section_234c(
-        ay, assessed_tax, advance_tax_instalments, result
+    # The first proviso to section 234C(1) excuses the earlier instalments
+    # where the shortfall is down to capital gains, dividends, winnings or
+    # first-year business income. Without it, a December share sale would be
+    # charged interest for failing to pay tax on it in June.
+    result.section_234c, notes = section_234c(
+        ay, assessed_tax, advance_tax_instalments, deferrable or []
     )
+    result.notes.extend(notes)
     return result
-
-
-def _section_234c(
-    ay: AssessmentYear,
-    assessed_tax: Decimal,
-    instalments: List[Tuple[date, Decimal]],
-    result: InterestResult,
-) -> Decimal:
-    """Quarterly deferment interest.
-
-    The first three instalments carry a relaxation: no interest if at least 12%
-    (for the 15% instalment) or 36% (for the 45% one) was paid.
-    """
-    relaxed = {D("0.15"): D("0.12"), D("0.45"): D("0.36")}
-    total = D(0)
-
-    for due, cumulative_pct, months in ay.advance_tax_schedule:
-        required = assessed_tax * cumulative_pct
-        paid_by_due = sum(
-            (amount for paid_on, amount in instalments if paid_on <= due), D(0)
-        )
-        threshold_pct = relaxed.get(cumulative_pct, cumulative_pct)
-        if paid_by_due >= assessed_tax * threshold_pct:
-            continue
-        shortfall = non_negative(required - paid_by_due)
-        if shortfall <= 0:
-            continue
-        charge = rupees(
-            _round_down_to_hundred(shortfall) * ay.interest_rate_per_month * months
-        )
-        total += charge
-        if charge:
-            result.notes.append(
-                f"Section 234C: ₹{shortfall:,.0f} short by {due:%d %b %Y} "
-                f"({cumulative_pct * 100:.0f}% instalment) — {months} month(s)."
-            )
-    return total

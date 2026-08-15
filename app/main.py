@@ -1,7 +1,9 @@
 """The web application.
 
-A five-step wizard: upload documents, review what was extracted, fill the gaps,
-compare the two regimes, then generate the filing pack and the ITR JSON.
+A six-step wizard — upload documents, review what was extracted, fill the gaps,
+work through the foreign income, compare the two regimes, generate the filing
+pack — plus the advance-tax planner, which sits outside the wizard because it
+looks forward at the year in progress rather than back at the one being filed.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from .money import D, inr
 from .parsers.base import Extraction, Fact
 from .parsers.registry import DOCUMENT_LABELS, parse_document
 from .reconcile import reconcile
+from .planner import build_planner, record_payment_hint
 from .schemas import (
     BankAccount,
     CapitalGainItem,
@@ -41,6 +44,7 @@ from .schemas import (
     HouseProperty,
     RSUVest,
     SalaryIncome,
+    VestingSchedule,
     TaxPayment,
     TaxReturn,
 )
@@ -407,6 +411,7 @@ async def save_foreign(
     raw = await request.form()
     form = dict(raw)
 
+    tr.vesting_schedules = _collect_schedules(raw)
     tr.rsu_vests = _collect_vests(raw)
     tr.dividends = _collect_dividends(raw)
     tr.foreign_sales = _collect_foreign_sales(raw)
@@ -451,6 +456,39 @@ def _collect_vests(form) -> List[RSUVest]:
             included_in_form16=row.get("included_in_form16") == "on",
             forex_rate_override=D(row["forex_rate_override"])
             if row.get("forex_rate_override") else None,
+        ))
+    return out
+
+
+def _collect_schedules(form) -> List[VestingSchedule]:
+    out: List[VestingSchedule] = []
+    for row in _indexed(form, "sched"):
+        total = D(row.get("total_shares", 0))
+        if total <= 0:
+            continue
+        # Actual prices arrive as "2025-09-15=150.00" lines, one per tranche.
+        actual: Dict[str, str] = {}
+        for line in (row.get("actual_fmv", "") or "").splitlines():
+            if "=" not in line:
+                continue
+            when, _, price = line.partition("=")
+            when, price = when.strip(), price.strip()
+            if when and price:
+                actual[when] = price
+        out.append(VestingSchedule(
+            grant_id=row.get("grant_id", ""),
+            symbol=row.get("symbol", "").upper(),
+            company_name=row.get("company_name", ""),
+            grant_date=_parse_iso_date(row.get("grant_date", "")),
+            total_shares=total,
+            frequency=row.get("frequency", "quarterly") or "quarterly",
+            first_vest_date=_parse_iso_date(row.get("first_vest_date", "")),
+            tranches=int(D(row.get("tranches", 0)) or 16),
+            cliff_shares=D(row.get("cliff_shares", 0)),
+            estimated_fmv_per_share_fx=D(row.get("estimated_fmv_per_share_fx", 0)),
+            sell_to_cover_fraction=D(row.get("sell_to_cover_fraction", "0.31")),
+            included_in_form16=row.get("included_in_form16") == "on",
+            actual_fmv=actual,
         ))
     return out
 
@@ -549,6 +587,53 @@ def choose_regime(
     record.save(tr)
     session.commit()
     return RedirectResponse(f"/returns/{return_id}/file", status_code=303)
+
+
+# --------------------------------------------------------------------------
+# The advance-tax planner — a forward-looking tool, not part of filing
+# --------------------------------------------------------------------------
+
+
+@app.get("/returns/{return_id}/planner", response_class=HTMLResponse)
+def planner_page(
+    request: Request,
+    return_id: str,
+    as_of: str = "",
+    session: Session = Depends(db_session),
+):
+    record = _load(session, return_id)
+    tr = record.load()
+    when = _parse_iso_date(as_of) or date.today()
+    result = build_planner(tr, as_of=when)
+    return render("planner.html",
+        _ctx(request, record, planner=result, as_of=when,
+             challan=record_payment_hint(result.plan),
+             schedules=tr.vesting_schedules),
+    )
+
+
+@app.post("/returns/{return_id}/planner/payment")
+async def record_advance_payment(
+    request: Request, return_id: str, session: Session = Depends(db_session)
+):
+    """Log an advance-tax challan, so the next quarter's plan reflects it."""
+    record = _load(session, return_id)
+    tr = record.load()
+    form = dict(await request.form())
+
+    amount = D(form.get("amount", 0))
+    if amount > 0:
+        tr.taxes_paid.payments.append(TaxPayment(
+            kind="advance_tax",
+            amount=amount,
+            payment_date=_parse_iso_date(form.get("payment_date", "")) or date.today(),
+            bsr_code=form.get("bsr_code", ""),
+            challan_serial=form.get("challan_serial", ""),
+            deductor_name="Self — advance tax",
+        ))
+        record.save(tr)
+        session.commit()
+    return RedirectResponse(f"/returns/{return_id}/planner", status_code=303)
 
 
 # --------------------------------------------------------------------------

@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple
 from ..money import D, non_negative, round_to_ten, rupees
 from ..schemas import TaxReturn
 from . import heads
+from .advance_tax import DeferrableItem
 from .chapter_via import DeductionResult, compute_deductions
 from .interest import InterestResult, compute_interest_and_fee
 from .rules import AssessmentYear, RegimeRules, age_band, get_ay
@@ -82,6 +83,8 @@ class Computation:
 
     interest: InterestResult = field(default_factory=InterestResult)
     ftc: Optional[object] = None          # foreign.ftc.FTCResult when relevant
+    # Income the proviso to section 234C excuses from the earlier instalments.
+    deferrable: List[DeferrableItem] = field(default_factory=list)
 
     tds: Decimal = D(0)
     tcs: Decimal = D(0)
@@ -332,6 +335,7 @@ def compute(
         for p in paid.payments
         if p.kind == "advance_tax"
     ]
+    comp.deferrable = build_deferrable(tr, comp)
     comp.interest = compute_interest_and_fee(
         ay,
         total_tax_liability=comp.total_tax_liability,
@@ -343,6 +347,7 @@ def compute(
         is_audit_case=False,
         has_only_pension_or_no_business=not tr.has_business_income,
         is_senior_citizen=band_key in ("senior", "super_senior"),
+        deferrable=comp.deferrable,
     )
 
     net = (
@@ -473,6 +478,109 @@ def _tax_at_income(
         reduction -= take
         tax += (chargeable - take) * slice_.rate
     return tax
+
+
+# --------------------------------------------------------------------------
+# Income the section 234C proviso covers
+# --------------------------------------------------------------------------
+
+
+def build_deferrable(tr: TaxReturn, comp: Computation) -> List[DeferrableItem]:
+    """Attribute tax to each piece of income the proviso to section 234C covers.
+
+    Capital gains, dividends and winnings are excused from the instalments that
+    fell due before the income arose — but only the tax *on that income*, so it
+    has to be picked out of the aggregate liability.
+    """
+    items: List[DeferrableItem] = []
+    if comp.total_income <= 0:
+        return items
+
+    # Surcharge, cess and the rebate all sit outside the slab and special-rate
+    # arithmetic, so the attributed tax is grossed up in the same proportion as
+    # the liability as a whole.
+    base_tax = comp.tax_before_rebate
+    gross_up = (
+        comp.total_tax_liability / base_tax if base_tax > 0 else D(0)
+    )
+    average_rate = comp.total_tax_liability / comp.total_income
+
+    # ---- Capital gains -----------------------------------------------------
+    special_by_code = {s.code: s for s in comp.special_slices}
+    gains_by_code: Dict[str, List] = {}
+    for item in tr.capital_gains:
+        if item.net_gain > 0:
+            gains_by_code.setdefault(item.category, []).append(item)
+
+    for code, gains in gains_by_code.items():
+        total_gain = sum((g.net_gain for g in gains), D(0))
+        if total_gain <= 0:
+            continue
+        slice_ = special_by_code.get(code)
+        for gain in gains:
+            share = gain.net_gain / total_gain
+            if slice_ is not None:
+                tax = slice_.tax * share * gross_up
+            else:
+                # Taxed at slab rates alongside everything else.
+                tax = gain.net_gain * average_rate
+            items.append(DeferrableItem(
+                kind="capital_gains",
+                label=gain.description or "Capital gain",
+                arising_on=gain.sale_date,
+                income=gain.net_gain,
+                tax=tax,
+            ))
+
+    # ---- Dividends ---------------------------------------------------------
+    for dividend in tr.dividends:
+        if dividend.gross_amount_fx <= 0:
+            continue
+        # The rupee value is already inside other_sources; approximate the
+        # per-payment tax at the average rate.
+        share = (
+            dividend.gross_amount_fx
+            / sum((d.gross_amount_fx for d in tr.dividends), D(0))
+        )
+        items.append(DeferrableItem(
+            kind="dividend",
+            label=f"Dividend — {dividend.symbol or 'foreign holding'}",
+            arising_on=dividend.pay_date,
+            income=tr.other_sources.foreign_dividend_income * share,
+            tax=tr.other_sources.foreign_dividend_income * share * average_rate,
+        ))
+
+    domestic_dividend = tr.other_sources.dividend_income
+    if domestic_dividend > 0:
+        # No payment date is captured for domestic dividends, so the relief
+        # cannot be granted — the earliest instalment is assumed, which never
+        # understates the liability.
+        items.append(DeferrableItem(
+            kind="dividend",
+            label="Dividend income (no payment date recorded)",
+            arising_on=_fy_start(comp),
+            income=domestic_dividend,
+            tax=domestic_dividend * average_rate,
+        ))
+
+    # ---- Winnings ----------------------------------------------------------
+    winnings_slice = special_by_code.get("winnings_115bb")
+    if winnings_slice is not None:
+        items.append(DeferrableItem(
+            kind="winnings",
+            label="Winnings taxable u/s 115BB",
+            arising_on=None,
+            income=winnings_slice.income,
+            tax=winnings_slice.tax * gross_up,
+        ))
+
+    return [item for item in items if item.tax > 0]
+
+
+def _fy_start(comp: Computation) -> date:
+    """First day of the previous year — the most conservative arising date."""
+    start_year = int(comp.assessment_year.split("-")[0]) - 1
+    return date(start_year, 4, 1)
 
 
 # --------------------------------------------------------------------------

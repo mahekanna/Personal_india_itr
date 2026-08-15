@@ -8,7 +8,10 @@ field-by-field filing pack.
 
 It handles **US RSUs, ESPP, dividends and dividend reinvestment** properly —
 including the three things that trip nearly everyone up: the 24-month holding
-period, the calendar-year Schedule FA, and reinvested dividends.
+period, the calendar-year Schedule FA, and reinvested dividends. A quarterly
+vesting schedule is described once and expands into its tranches, and an
+**advance-tax planner** works out what to pay each quarter, applying the proviso
+to section 234C that most calculators ignore.
 
 Everything runs on your machine. No document is uploaded anywhere.
 
@@ -90,6 +93,8 @@ notice under section 143(1)(a), and all three are checked before you file:
   section 80A(2) — deductions never touch special-rate income
 - Interest under sections 234A, 234B and 234C, and the section 234F fee, with
   the section 207(2) exemption for senior citizens without business income
+- Section 234C computed with its first proviso, so capital gains and dividends
+  are not charged interest for the instalments that fell due before they arose
 
 ### US RSUs, ESPP and dividends
 
@@ -147,6 +152,51 @@ was paid correctly. Table A2 (the custodial account) and Table A3 (the shares)
 are both generated, and a missing entity address is flagged before the portal
 rejects it.
 
+### Quarterly vesting, and advance tax
+
+**A grant is described once.** A four-year grant vesting quarterly is sixteen
+separate salary events, each at its own price, its own Rule 115 exchange rate
+and its own 24-month clock. Give the system the grant, the frequency, the first
+vest date and any cliff, and it generates the tranches — clamping to the month
+end, so a grant vesting on the 31st vests on 28 February rather than rolling
+into March and landing in a different quarter. Tranches add back to the grant
+exactly; rounding never loses or invents a share.
+
+Tranches with a real price go into the return. Tranches still to come are
+**projections**: they are valued at your estimate, used to size the advance-tax
+instalments, and never allowed anywhere near the return or the ITR JSON. A vest
+you entered by hand always beats the generated one.
+
+**The advance-tax planner is where the ₹234C proviso earns its keep.** Section
+211 wants 15% by 15 June, 45% by 15 September, 75% by 15 December and the whole
+of it by 15 March, and section 234C charges 1% a month on any shortfall. Applied
+naively that is punitive for anyone with capital gains, because it demands tax
+in June on a gain made in December.
+
+The **first proviso to section 234C(1)** says otherwise. Where the shortfall is
+down to capital gains, dividends, winnings, or business income in its first
+year, no interest arises for the earlier instalments — *provided* the whole of
+the tax on that income is paid in the remaining ones, or by 31 March where the
+income arose after 15 March.
+
+So the planner splits your liability in two:
+
+| | Follows | Because |
+|---|---|---|
+| Salary, interest, rent | 15 / 45 / 75 / 100 | Foreseeable from April |
+| **Capital gains and dividends** | Full tax, from the quarter it arose | The proviso |
+
+The trade is worth understanding: relief on the earlier instalments is bought by
+owing the *entire* tax on that income at the very next one, not a fraction of
+it. Miss that instalment and the relief goes with it. The planner shows both the
+interest actually chargeable and the net saving against a naive calculation.
+
+It also shows, per quarter, which vests and which sales fell in that window,
+what was required, what was paid, what is short and what that costs — with the
+challan details for the payment (ITNS 280, minor head 100) and somewhere to log
+the BSR code and serial number afterwards, so the next quarter accounts for it
+and the figures are ready for the return.
+
 **Picks the form and explains why.** ITR-1 versus ITR-2 versus ITR-4, with every
 disqualification listed. Filing the wrong form makes a return defective under
 section 139(9), so the selector escalates when in doubt.
@@ -200,14 +250,21 @@ it came from. Nothing has touched the return yet. Untick whatever looks wrong.
 Where Form 16 and Form 26AS disagree on TDS, the default is to trust 26AS, since
 that is the statement the department matches your claim against.
 
+**4 · Foreign.** Vesting schedules, individual vests, dividends, sales,
+exchange rates and Schedule FA.
+
 **3 · Income.** Everything read from your documents, pre-filled and editable,
 plus what the documents did not cover. Enter deductions as what you actually
 invested — the ceilings are applied for you.
 
-**4 · Regime.** Both regimes side by side, line by line, with reconciliation
+**5 · Regime.** Both regimes side by side, line by line, with reconciliation
 findings. It recommends one; you can override it.
 
-**5 · File.** The chosen ITR form with reasons, the JSON, the computation PDF,
+**Advance tax** sits outside the wizard, because it looks forward at the year
+in progress rather than back at the one being filed. It is reachable from the
+Foreign, Regime and File screens.
+
+**6 · File.** The chosen ITR form with reasons, the JSON, the computation PDF,
 the filing pack, and an ordered checklist — including paying self-assessment tax
 *before* generating the final JSON if there is a balance, and e-verifying within
 30 days, without which the return is treated as never filed.
@@ -216,7 +273,7 @@ the filing pack, and an ordered checklist — including paying self-assessment t
 
 ## Correctness
 
-The tax engine has 47 golden tests whose expected values were worked out by hand
+The tax engine has 84 golden tests whose expected values were worked out by hand
 from the statute rather than generated by running the code — a test that records
 current behaviour merely freezes bugs in place. They cover every new-regime slab
 boundary, 87A and its marginal relief, surcharge marginal relief at the ₹50 lakh
@@ -224,7 +281,7 @@ threshold, the capital-gains buckets, loss set-off ordering, the Chapter VI-A
 ceilings and the interest sections.
 
 ```bash
-pytest tests/ -q          # 143 tests
+pytest tests/ -q          # 180 tests
 ```
 
 Two invariants worth knowing about, because they are easy to get wrong:
@@ -242,6 +299,12 @@ Two invariants worth knowing about, because they are easy to get wrong:
   understates the tax badly.
 - **Schedule FA is on the calendar year.** Nothing else in the return is, so the
   figures deliberately do not tie to the rest of it.
+- **Section 234C has a proviso.** Charging capital gains as though they should
+  have been foreseen in April is the commonest advance-tax error, and it always
+  errs against the taxpayer.
+- **A projection is not a figure.** Tranches that have not vested exist to size
+  an instalment. They are barred from the return and from the ITR JSON, and
+  there is a test that says so.
 
 ---
 
@@ -277,13 +340,16 @@ app/
     heads.py          Salary, house property, business, capital gains, other sources
     chapter_via.py    Chapter VI-A with the statutory ceilings
     interest.py       Sections 234A, 234B, 234C and the 234F fee
+    advance_tax.py    Instalments, and the proviso to section 234C
     engine.py         The computation, and the regime comparison
   parsers/
     base.py           PDF text and table extraction, decryption, field scraping
     registry.py       Document identification and dispatch
     form16.py  form26as.py  ais.py  bank.py  broker.py  us_equity.py
+  planner.py          The advance-tax planner
   foreign/
     forex.py          Rule 115 conversion, and which months still need a rate
+    vesting.py        Expanding a grant into its tranches
     rsu.py            Vesting, lot tracking, FIFO matching, the 24-month test
     dividends.py      Gross-up, reinvestment, the treaty withholding cap
     ftc.py            Section 90 credit under Rule 128, and Form 67
@@ -297,7 +363,7 @@ app/
   merge.py            Applying reviewed extractions, with de-duplication
   report.py           The computation-sheet PDF
   main.py             Routes
-tests/                143 tests
+tests/                180 tests
 ```
 
 Adding an assessment year is a data edit in `tax/rules.py`, not a code change —
@@ -333,6 +399,10 @@ table, the ₹12,00,000 rebate ceiling with a ₹60,000 maximum rebate, and the
 ₹75,000 standard deduction — together with the capital-gains regime introduced
 by the Finance (No. 2) Act 2024 with effect from 23 July 2024. AY 2025-26 is
 retained so that a belated or updated return can still be prepared.
+
+Advance tax follows sections 207, 208 and 211, with interest under section 234C
+and its first proviso as substituted by the Finance Act 2021, which extended the
+relief to dividend income.
 
 Foreign equity follows sections 17(2)(vi) and 49(2AA) for vesting and cost
 basis, section 112 for gains on shares not listed on a recognised Indian stock
