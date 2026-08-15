@@ -485,6 +485,8 @@ def compute_other_sources(
         ("Other interest income", src.other_interest),
         ("Interest on income-tax refund", src.income_tax_refund_interest),
         ("Dividend income", src.dividend_income),
+        ("Foreign dividend income (gross, before tax withheld abroad)",
+         src.foreign_dividend_income),
         ("Taxable gifts u/s 56(2)(x)", src.gifts_taxable),
         ("Any other income", src.other_income),
     ]

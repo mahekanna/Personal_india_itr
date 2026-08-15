@@ -95,6 +95,12 @@ class CapitalGainRule:
     # Act 2024, fifth proviso to section 112(1).
     grandfathered_indexation_option: bool = False
     indexed_rate: Optional[Decimal] = None
+    # Months of holding after which a gain in this bucket turns long term.
+    # Securities listed on a recognised Indian stock exchange turn at 12; a
+    # share on the NYSE or NASDAQ is not so listed, so it turns at 24.
+    long_term_months: int = 24
+    # Foreign-sourced, so it feeds Schedule FSI and the foreign tax credit.
+    is_foreign: bool = False
 
 
 @dataclass(frozen=True)
@@ -211,7 +217,7 @@ def _capital_gain_rules() -> Dict[str, CapitalGainRule]:
     return {
         "stcg_111a": CapitalGainRule(
             "stcg_111a", "STCG on listed equity / equity MF (STT paid) — s.111A",
-            D("0.20"),
+            D("0.20"), long_term_months=12,
         ),
         "stcg_slab": CapitalGainRule(
             "stcg_slab", "STCG on other assets (taxed at slab rates)", None,
@@ -222,7 +228,7 @@ def _capital_gain_rules() -> Dict[str, CapitalGainRule]:
         ),
         "ltcg_112a": CapitalGainRule(
             "ltcg_112a", "LTCG on listed equity / equity MF (STT paid) — s.112A",
-            D("0.125"), exemption=D("125000"),
+            D("0.125"), exemption=D("125000"), long_term_months=12,
         ),
         "ltcg_112_property": CapitalGainRule(
             "ltcg_112_property", "LTCG on land or building — s.112 @12.5%",
@@ -242,6 +248,21 @@ def _capital_gain_rules() -> Dict[str, CapitalGainRule]:
         "ltcg_112_other": CapitalGainRule(
             "ltcg_112_other", "LTCG on other assets (gold, unlisted, debt) — s.112",
             D("0.125"),
+        ),
+        # --- Foreign equity -------------------------------------------------
+        # Sections 111A and 112A need securities transaction tax, which is
+        # never paid on a US trade, so RSU and ESPP shares fall to the general
+        # provisions: 12.5% under section 112 after 24 months, slab rates
+        # before that. Selling at 18 months costs slab rate, not 12.5%.
+        "ltcg_112_foreign": CapitalGainRule(
+            "ltcg_112_foreign",
+            "LTCG on foreign shares (RSU, ESPP, direct) — s.112 @12.5%",
+            D("0.125"), long_term_months=24, is_foreign=True,
+        ),
+        "stcg_slab_foreign": CapitalGainRule(
+            "stcg_slab_foreign",
+            "STCG on foreign shares (held 24 months or less) — slab rates",
+            None, long_term_months=24, is_foreign=True,
         ),
     }
 

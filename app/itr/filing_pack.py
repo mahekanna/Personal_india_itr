@@ -140,6 +140,57 @@ def build_filing_pack(tr: TaxReturn, comp: Computation, form: str) -> FilingPack
                                 inr(comp.deductions_total)))
         pack.sections.append(via)
 
+    if tr.foreign_assets:
+        fa = PackSection("Schedule FA — Foreign Assets (CALENDAR year)")
+        fa.rows.append(PackRow(
+            "Reporting period",
+            f"1 January to 31 December {tr.foreign_assets[0].calendar_year}",
+            "Not the financial year. This is the single commonest error in "
+            "this schedule.",
+        ))
+        for row in tr.foreign_assets:
+            prefix = f"Table {row.table} · {row.entity_name}"
+            fa.rows += [
+                PackRow(f"{prefix} — country", row.country_name),
+                PackRow(f"{prefix} — address",
+                        f"{row.entity_address} {row.entity_zip}".strip()),
+                PackRow(f"{prefix} — date acquired",
+                        row.date_acquired.strftime("%d/%m/%Y")
+                        if row.date_acquired else ""),
+                PackRow(f"{prefix} — initial investment",
+                        inr(row.initial_investment)),
+                PackRow(f"{prefix} — peak value", inr(row.peak_value)),
+                PackRow(f"{prefix} — closing balance", inr(row.closing_value)),
+                PackRow(f"{prefix} — gross income and proceeds",
+                        inr(row.gross_income_accrued)),
+            ]
+        pack.sections.append(fa)
+
+    ftc = getattr(comp, "ftc", None)
+    if ftc and getattr(ftc, "lines", None):
+        fsi = PackSection("Schedule FSI and Schedule TR — Foreign Tax Credit")
+        for line in ftc.lines:
+            fsi.rows += [
+                PackRow(f"{line.nature_of_income} — income from outside India",
+                        inr(line.income_inr)),
+                PackRow(f"{line.nature_of_income} — tax paid outside India",
+                        inr(line.foreign_tax_inr)),
+                PackRow(f"{line.nature_of_income} — tax payable in India",
+                        inr(line.indian_tax_on_income)),
+                PackRow(f"{line.nature_of_income} — relief claimed u/s 90",
+                        inr(line.credit_allowed),
+                        "Rule 128 caps the credit at the Indian tax on the "
+                        "same income"),
+            ]
+        fsi.rows.append(PackRow("Total relief u/s 90", inr(ftc.total_credit)))
+        if ftc.total_forfeited > 0:
+            fsi.rows.append(PackRow(
+                "Foreign tax that cannot be credited",
+                inr(ftc.total_forfeited),
+                "Not refundable and does not carry forward",
+            ))
+        pack.sections.append(fsi)
+
     computation = PackSection("Part B-TI and Part B-TTI — Computation")
     computation.rows += [
         PackRow("Gross total income", inr(comp.gross_total_income)),
@@ -204,6 +255,20 @@ def _checklist(tr: TaxReturn, comp: Computation, form: str) -> List[str]:
             "Add that challan to the return before generating the JSON again, "
             "otherwise the portal will show the tax as still outstanding."
         )
+    ftc = getattr(comp, "ftc", None)
+    if ftc and getattr(ftc, "total_credit", 0) > 0:
+        steps.insert(0, (
+            "File Form 67 first, before the return — e-File → Income Tax Forms "
+            "→ File Income Tax Forms → Form 67. Rule 128(9) requires it, and "
+            "CPC denies the foreign tax credit without it."
+        ))
+    if tr.foreign_assets:
+        steps.append(
+            "Check Schedule FA line by line. It reports the CALENDAR year, not "
+            "the financial year, and omitting a single foreign asset carries a "
+            "flat ₹10 lakh penalty under the Black Money Act."
+        )
+
     steps += [
         f"Log in at incometax.gov.in and go to e-File → Income Tax Returns → "
         f"File Income Tax Return, choose AY {tr.assessment_year} and {form}.",

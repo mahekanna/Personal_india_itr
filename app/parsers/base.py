@@ -52,6 +52,12 @@ class Extraction:
     payments: List[Dict[str, Any]] = field(default_factory=list)
     capital_gains: List[Dict[str, Any]] = field(default_factory=list)
     house_properties: List[Dict[str, Any]] = field(default_factory=list)
+    # Foreign equity, kept apart from ``capital_gains`` because a vest or a
+    # dividend is not yet a gain — it has to go through the Rule 115 conversion
+    # and the lot matching first.
+    rsu_vests: List[Dict[str, Any]] = field(default_factory=list)
+    dividends: List[Dict[str, Any]] = field(default_factory=list)
+    foreign_sales: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     raw_text_excerpt: str = ""
 

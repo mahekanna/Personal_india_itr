@@ -372,8 +372,11 @@ def build_itr2(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
             "TotalCapGains": _i(comp.capital_gains),
             "ShortTerm": {
                 "ShortTerm15Per": _i(_slice_income(comp, "stcg_111a")),
+                # Foreign shares pay no securities transaction tax, so a
+                # short-term gain on them is taxed at slab rates, not 20%.
+                "ShortTermAppRate": _i(_slab_rate_gains(tr, comp)),
                 "TotalShortTerm": _i(
-                    _slice_income(comp, "stcg_111a") + _slice_income(comp, "stcg_slab")
+                    _slice_income(comp, "stcg_111a") + _slab_rate_gains(tr, comp)
                 ),
             },
             "LongTerm": {
@@ -382,12 +385,14 @@ def build_itr2(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
                     _slice_income(comp, "ltcg_112_property")
                     + _slice_income(comp, "ltcg_112_property_indexed")
                     + _slice_income(comp, "ltcg_112_other")
+                    + _slice_income(comp, "ltcg_112_foreign")
                 ),
                 "TotalLongTerm": _i(
                     _slice_income(comp, "ltcg_112a")
                     + _slice_income(comp, "ltcg_112_property")
                     + _slice_income(comp, "ltcg_112_property_indexed")
                     + _slice_income(comp, "ltcg_112_other")
+                    + _slice_income(comp, "ltcg_112_foreign")
                 ),
             },
         },
@@ -415,6 +420,12 @@ def build_itr2(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
             "GrossTaxLiability": _i(
                 comp.tax_after_rebate + comp.surcharge + comp.cess
             ),
+            "TaxRelief": {
+                "Section89": _i(comp.relief_89),
+                "Section90": _i(comp.relief_90_91),
+                "Section91": 0,
+                "TotTaxRelief": _i(comp.relief_89 + comp.relief_90_91),
+            },
             "NetTaxLiability": _i(comp.total_tax_liability),
             "IntrstPay": {
                 "IntrstPayUs234A": _i(comp.interest.section_234a),
@@ -470,6 +481,7 @@ def build_itr2(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
                 "ScheduleOS": _schedule_os(tr, comp),
                 "ScheduleVIA": _chapter_via_block(comp),
                 "ScheduleSI": schedule_si,
+                **_foreign_schedules(tr, comp),
                 "PartB-TI": part_b_ti,
                 "PartB_TTI": part_b_tti,
                 "Verification": _verification(tr, today),
@@ -479,6 +491,120 @@ def build_itr2(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
         }
     }
     return payload
+
+
+def _slab_rate_gains(tr: TaxReturn, comp: Computation) -> Decimal:
+    """Capital gains taxed at slab rates rather than at a special rate.
+
+    Short-term gains on foreign shares and on non-STT assets sit inside normal
+    income, so they never appear as a Schedule SI slice and have to be totalled
+    from the source rows instead.
+    """
+    slab_codes = {"stcg_slab", "stcg_slab_foreign", "stcg_debt_mf"}
+    return sum(
+        (item.net_gain for item in tr.capital_gains
+         if item.category in slab_codes and item.net_gain > 0),
+        D(0),
+    )
+
+
+def _foreign_schedules(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
+    """Schedule FA, Schedule FSI and Schedule TR.
+
+    Schedule FA reports on the calendar year, so its figures deliberately do not
+    tie to anything else in the return.
+    """
+    out: Dict[str, Any] = {}
+
+    custodial = [row for row in tr.foreign_assets if row.table == "A2"]
+    equity = [row for row in tr.foreign_assets if row.table == "A3"]
+
+    if custodial or equity:
+        schedule_fa: Dict[str, Any] = {}
+        if custodial:
+            schedule_fa["DetailsForeignCustodialAcc"] = [
+                {
+                    "CountryCodeExcludingIndia": row.country_code,
+                    "CountryName": row.country_name,
+                    "NameOfInstitution": row.entity_name,
+                    "AddressOfInstitution": row.entity_address,
+                    "ZipCode": row.entity_zip,
+                    "AccountNumber": row.nature_of_interest,
+                    "StatusOfAccount": "Owner",
+                    "AccountOpeningDate": row.date_acquired.isoformat()
+                    if row.date_acquired else "",
+                    "PeakBalanceDuringPeriod": _i(row.peak_value),
+                    "ClosingBalance": _i(row.closing_value),
+                    "GrossInterestPaidCredited": _i(row.gross_income_accrued),
+                    "NatureOfAmount": row.nature_of_income,
+                    "AmountOfIncomeTaxableAndOfferedInThisReturn":
+                        _i(row.income_offered_amount),
+                    "ScheduleWhereOffered": row.income_offered_schedule,
+                }
+                for row in custodial
+            ]
+        if equity:
+            schedule_fa["DetailsForeignEquityDebtInterest"] = [
+                {
+                    "CountryCodeExcludingIndia": row.country_code,
+                    "CountryName": row.country_name,
+                    "NameOfEntity": row.entity_name,
+                    "AddressOfEntity": row.entity_address,
+                    "ZipCode": row.entity_zip,
+                    "NatureOfEntity": row.nature_of_entity,
+                    "InterestAcquiringDate": row.date_acquired.isoformat()
+                    if row.date_acquired else "",
+                    "InitialValOfInvstmnt": _i(row.initial_investment),
+                    "PeakBalanceDuringPeriod": _i(row.peak_value),
+                    "ClosingBalance": _i(row.closing_value),
+                    "TotGrossAmtPaidCredited": _i(row.gross_income_accrued),
+                    "NatureOfAmount": row.nature_of_income,
+                    "IncTaxableAndOfferedInThisReturn":
+                        _i(row.income_offered_amount),
+                    "ScheduleWhereOffered": row.income_offered_schedule,
+                }
+                for row in equity
+            ]
+        out["ScheduleFA"] = schedule_fa
+
+    ftc = getattr(comp, "ftc", None)
+    if ftc and getattr(ftc, "lines", None):
+        by_country: Dict[str, Dict[str, Any]] = {}
+        for line in ftc.lines:
+            entry = by_country.setdefault(line.country_code, {
+                "CountryCodeExcludingIndia": line.country_code,
+                "TaxpayerIdentificationNo": "",
+                "IncFromOS": {
+                    "IncFrmOutsideInd": 0, "TaxPaidOutsideInd": 0,
+                    "TaxPayableinInd": 0, "TaxReliefinInd": 0,
+                    "TaxReliefOutsideIndiaSec": "90",
+                },
+            })
+            head = entry["IncFromOS"]
+            head["IncFrmOutsideInd"] += _i(line.income_inr)
+            head["TaxPaidOutsideInd"] += _i(line.foreign_tax_inr)
+            head["TaxPayableinInd"] += _i(line.indian_tax_on_income)
+            head["TaxReliefinInd"] += _i(line.credit_allowed)
+
+        out["ScheduleFSI"] = {"ScheduleFSIDtls": list(by_country.values())}
+        out["ScheduleTR1"] = {
+            "ScheduleTR": [
+                {
+                    "CountryCodeExcludingIndia": code,
+                    "TaxPaidOutsideIndia": entry["IncFromOS"]["TaxPaidOutsideInd"],
+                    "TaxReliefOutsideIndia": entry["IncFromOS"]["TaxReliefinInd"],
+                    "TaxReliefOutsideIndiaSec": "90",
+                }
+                for code, entry in by_country.items()
+            ],
+            "TotalTaxPaidOutsideIndia": _i(
+                sum(line.foreign_tax_inr for line in ftc.lines)
+            ),
+            "TotalTaxReliefOutsideIndia": _i(ftc.total_credit),
+            "TaxReliefOutsideIndiaDTAA": _i(ftc.total_credit),
+            "TaxReliefOutsideIndiaNotDTAA": 0,
+        }
+    return out
 
 
 def _slice_income(comp: Computation, code: str) -> Decimal:
@@ -587,6 +713,7 @@ def _schedule_si(comp: Computation) -> Dict[str, Any]:
         "ltcg_112_property": "21",
         "ltcg_112_property_indexed": "21ci",
         "ltcg_112_other": "21",
+        "ltcg_112_foreign": "21",
         "winnings_115bb": "5BB",
     }
     rows = []

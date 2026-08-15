@@ -69,8 +69,18 @@ def select_form(tr: TaxReturn) -> FormDecision:
         blocks.append(
             "Presumptive business or professional income belongs in ITR-4."
         )
-    if tr.taxpayer.has_foreign_assets:
-        blocks.append("Foreign assets or foreign income require ITR-2 or ITR-3.")
+    if tr.taxpayer.has_foreign_assets or tr.foreign_assets or tr.rsu_vests \
+            or tr.foreign_holdings:
+        blocks.append(
+            "Foreign assets rule out ITR-1 outright. RSUs, ESPP shares or any "
+            "overseas holding mean Schedule FA, which only ITR-2 and ITR-3 "
+            "carry — and Schedule FA is not optional at any value."
+        )
+    if tr.dividends or tr.foreign_taxes:
+        blocks.append(
+            "Foreign income with tax paid abroad needs Schedule FSI and "
+            "Schedule TR, which ITR-1 does not have."
+        )
     if tr.taxpayer.is_company_director:
         blocks.append("A director of a company cannot file ITR-1.")
     if tr.taxpayer.holds_unlisted_equity:

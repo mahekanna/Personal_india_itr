@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from . import ais, bank, broker, form16, form26as
+from . import ais, bank, broker, form16, form26as, us_equity
 from .base import (
     Extraction,
     PasswordRequired,
@@ -34,6 +34,7 @@ DOCUMENT_LABELS = {
     "ais": "Annual Information Statement",
     "bank_interest": "Bank interest certificate",
     "broker_pnl": "Broker capital-gains statement",
+    "us_equity": "US stock-plan or brokerage statement (RSU, dividends, sales)",
     "unknown": "Unrecognised document",
 }
 
@@ -58,9 +59,9 @@ def parse_document(
     """Identify and parse one uploaded file."""
     lowered = filename.lower()
 
-    # ---- Spreadsheets and CSVs are always broker or bank exports ----------
+    # ---- Spreadsheets and CSVs are broker exports of one flavour or another
     if lowered.endswith(_TABULAR_SUFFIXES):
-        return broker.parse_tabular(raw, filename)
+        return _parse_tabular(raw, filename, forced_type)
 
     # ---- AIS JSON ---------------------------------------------------------
     if lowered.endswith(".json"):
@@ -137,6 +138,37 @@ def parse_document(
             "Check the extracted figures carefully."
         )
     return extraction
+
+
+def _parse_tabular(raw: bytes, filename: str, forced_type: str = "") -> Extraction:
+    """Decide between an Indian broker export and a US stock-plan file.
+
+    The filename is a strong hint but not a reliable one — people rename these.
+    So whichever parser actually finds rows wins, and the US one is tried first
+    only when the name suggests it.
+    """
+    if forced_type == "us_equity":
+        return us_equity.parse_tabular(raw, filename)
+    if forced_type == "broker_pnl":
+        return broker.parse_tabular(raw, filename)
+
+    prefer_us = us_equity.score_filename(filename) > 0
+
+    if prefer_us:
+        result = us_equity.parse_tabular(raw, filename)
+        if result.rsu_vests or result.dividends or result.foreign_sales:
+            return result
+
+    indian = broker.parse_tabular(raw, filename)
+    if indian.capital_gains:
+        return indian
+
+    if not prefer_us:
+        result = us_equity.parse_tabular(raw, filename)
+        if result.rsu_vests or result.dividends or result.foreign_sales:
+            return result
+
+    return indian
 
 
 def parse_many(

@@ -65,6 +65,7 @@ def reconcile(tr: TaxReturn, extractions: List[Extraction]) -> ReconciliationRep
     _check_securities_coverage(tr, extractions, report)
     _check_missing_documents(tr, by_type, report)
     _check_internal_consistency(tr, report)
+    _check_foreign(tr, report)
     return report
 
 
@@ -225,6 +226,125 @@ def _check_missing_documents(
             "Salary figures have been entered without a Form 16 to check them "
             "against.",
         )
+
+
+def _check_foreign(tr: TaxReturn, report: ReconciliationReport) -> None:
+    """Foreign holdings carry their own, much larger, failure modes."""
+    has_foreign = bool(
+        tr.rsu_vests or tr.dividends or tr.foreign_sales
+        or tr.foreign_holdings or tr.foreign_assets
+    )
+    if not has_foreign:
+        return
+
+    resident = tr.taxpayer.residential_status == "RES"
+
+    # -- Schedule FA ------------------------------------------------------
+    if resident and not tr.foreign_assets:
+        report.add(
+            "error",
+            "Foreign holdings are present but Schedule FA is empty",
+            "A resident and ordinarily resident must report every foreign asset "
+            "held at any point in the calendar year, at any value, income or "
+            "no income.",
+            "Fill in the entity name, address and year-end price for each "
+            "holding on the Foreign income page. Omitting an asset attracts a "
+            "flat ₹10 lakh penalty under the Black Money Act — far more than "
+            "any tax at stake.",
+        )
+    elif resident and not tr.taxpayer.has_foreign_assets:
+        report.add(
+            "error",
+            "The foreign-assets declaration is unticked",
+            "Schedule FA rows exist but the return does not declare that "
+            "foreign assets are held.",
+            "Tick 'I hold foreign assets' on the Income page.",
+        )
+
+    incomplete = [
+        row.entity_name for row in tr.foreign_assets
+        if row.table == "A3" and (not row.entity_address or not row.entity_zip)
+    ]
+    if incomplete:
+        report.add(
+            "warning",
+            "Schedule FA rows are missing an address",
+            "The portal will not accept a Table A3 row without the entity's "
+            "address and ZIP code: " + ", ".join(incomplete[:4]) + ".",
+            "The registered address is on the company's investor-relations "
+            "page or the top of any 10-K.",
+        )
+
+    # -- Form 67 ----------------------------------------------------------
+    withheld = sum((d.foreign_tax_withheld_fx for d in tr.dividends), D(0))
+    if withheld > 0 and not tr.foreign_settings.form67_filed:
+        report.add(
+            "error",
+            "Foreign tax credit claimed without Form 67",
+            "Tax was withheld abroad and is being credited, but Form 67 is not "
+            "marked as filed.",
+            "Rule 128(9) wants Form 67 on the portal before the return. CPC "
+            "denies the credit when it is missing, and getting it restored "
+            "means an appeal.",
+        )
+
+    # -- The RSU perquisite against Form 16 --------------------------------
+    vest_value = sum(
+        (v.shares_vested * v.fmv_per_share_fx for v in tr.rsu_vests), D(0)
+    )
+    perquisite_in_form16 = sum((s.perquisites_17_2 for s in tr.salaries), D(0))
+    if vest_value > 0 and perquisite_in_form16 <= 0:
+        report.add(
+            "warning",
+            "RSUs vested but Form 16 shows no perquisite",
+            "Vesting is taxable as salary under section 17(2)(vi), so it "
+            "normally appears in the Form 16 perquisite figure.",
+            "Check the Form 16. If the vests really are missing from it, untick "
+            "'already included in my Form 16' against each one so the "
+            "perquisite is added — and expect the tax to rise accordingly.",
+        )
+
+    # -- Holding periods people misjudge -----------------------------------
+    near_miss = [
+        item for item in tr.capital_gains
+        if item.category == "stcg_slab_foreign"
+        and item.purchase_date and item.sale_date
+        and 18 <= _months_between(item.purchase_date, item.sale_date) < 24
+    ]
+    if near_miss:
+        report.add(
+            "info",
+            "Foreign shares sold shortly before the 24-month mark",
+            f"{len(near_miss)} lot(s) were sold between 18 and 24 months after "
+            "acquisition, so they are taxed at slab rates rather than 12.5%.",
+            "Nothing to fix on this return — but foreign shares need 24 months, "
+            "not the 12 that Indian listed shares need. Worth knowing before "
+            "the next sale.",
+        )
+
+    # -- Unmatched disposals ------------------------------------------------
+    unmatched = [
+        item for item in tr.capital_gains
+        if item.is_foreign and item.cost_of_acquisition == 0
+        and item.sale_consideration > 0
+    ]
+    if unmatched:
+        report.add(
+            "error",
+            "Foreign shares sold with no acquisition to match",
+            f"{len(unmatched)} disposal(s) could not be matched to a vesting "
+            "tranche or purchase, so the entire sale value is being treated as "
+            "gain.",
+            "Add the missing vests on the Foreign income page, or the tax will "
+            "be computed on the gross proceeds.",
+        )
+
+
+def _months_between(start, end) -> int:
+    months = (end.year - start.year) * 12 + (end.month - start.month)
+    if end.day < start.day:
+        months -= 1
+    return months
 
 
 def _check_internal_consistency(tr: TaxReturn, report: ReconciliationReport) -> None:

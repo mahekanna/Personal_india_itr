@@ -1,9 +1,14 @@
 # Personal India ITR
 
 A local web application that prepares an Indian income tax return end to end:
-it reads your Form 16, Form 26AS, AIS and broker statements, reconciles them
-against one another, computes the tax under both regimes, picks the right ITR
-form and produces a portal-ready ITR JSON plus a field-by-field filing pack.
+it reads your Form 16, Form 26AS, AIS, broker statements and US stock-plan
+exports, reconciles them against one another, computes the tax under both
+regimes, picks the right ITR form and produces a portal-ready ITR JSON plus a
+field-by-field filing pack.
+
+It handles **US RSUs, ESPP, dividends and dividend reinvestment** properly —
+including the three things that trip nearly everyone up: the 24-month holding
+period, the calendar-year Schedule FA, and reinvested dividends.
 
 Everything runs on your machine. No document is uploaded anywhere.
 
@@ -56,6 +61,7 @@ labelling. Each file is identified, parsed and scored for confidence.
 | AIS / TIS | JSON, PDF | Salary, interest, dividend, rent, securities sales, by information category |
 | Bank interest certificates | PDF | Savings and deposit interest kept separate — only savings interest qualifies for 80TTA |
 | Broker capital gains | XLSX, XLS, CSV | Every transaction, bucketed by asset type and holding period |
+| US stock plan and brokerage | XLSX, XLS, CSV | Vesting tranches, dividends and reinvestment, disposals — from E*TRADE, Fidelity, Schwab and Morgan Stanley StockPlan Connect |
 
 Zerodha Console, Groww, Upstox, Kuvera, CAMS and KFintech all use different
 column headings for the same six numbers, so headings are mapped onto a
@@ -84,6 +90,62 @@ notice under section 143(1)(a), and all three are checked before you file:
   section 80A(2) — deductions never touch special-rate income
 - Interest under sections 234A, 234B and 234C, and the section 234F fee, with
   the section 207(2) exemption for senior citizens without business income
+
+### US RSUs, ESPP and dividends
+
+Foreign equity is not one taxable event but three, and collapsing them is where
+returns go wrong.
+
+**Vesting is salary.** Section 17(2)(vi) taxes the fair market value on the
+vesting date as a perquisite at slab rates. Section 49(2AA) then makes that same
+value the cost basis on sale, which is what stops it being taxed twice. Your
+employer normally runs it through payroll, so it is already inside the Form 16 —
+each vest carries a tick-box for that, and the reconciler queries a vest with no
+matching section 17(2) figure.
+
+**The holding period is 24 months, not 12.** Sections 111A and 112A require
+securities transaction tax, which is never paid on a NYSE or NASDAQ trade. So a
+US share is not "listed" for this purpose however obviously listed it looks: it
+turns long term only at 24 months, and there is no ₹1.25 lakh shelter. Selling
+at 18 months means slab rates — up to 30% plus surcharge — rather than 12.5%.
+On a decent tranche that is lakhs. The interface shows the exact date each lot
+crosses over.
+
+**Reinvested dividends are income now.** A dividend is taxable on the payment
+date whether it reaches your bank or buys more shares, and it is taxed on the
+**gross**, before the 25% the US withholds. What reinvestment does change is the
+cost basis: every reinvestment is a fresh lot with its own acquisition date and
+its own 24-month clock. Quarterly reinvestment over three years leaves twelve
+small lots, most still short term when the position is finally sold — which is
+why a position you have "held for years" throws off short-term gains nobody
+expected. Each lot is tracked separately and matched first in, first out.
+
+**Rule 115 picks the exchange rate, and you do not.** Every amount converts at
+the SBI telegraphic transfer buying rate on the *last day of the month before*
+the transaction. A vest on 15 September uses the 31 August rate; three tranches
+in March, June and September use three different rates. A built-in table gets
+you computing immediately, but every rate in it is flagged provisional and the
+Foreign income page lists exactly which months you relied on so you can replace
+them with the published figures.
+
+**The foreign tax credit is capped.** Rule 128(2) allows the lower of the tax
+paid abroad and the Indian tax attributable to that same income — the excess is
+neither refunded nor carried forward, and the system says how much was lost and
+why. Withholding above the 25% the India-US treaty permits is not creditable
+here at all, which usually means a lapsed Form W-8BEN. Rule 128(9) wants
+**Form 67 filed before the return**; claiming credit without it is reported as a
+blocking error, because CPC denies it first and makes you appeal afterwards.
+
+**Schedule FA is the one with a ₹10 lakh penalty.** It reports the **calendar**
+year — 1 January to 31 December 2025 for AY 2026-27 — not the financial year, so
+a February 2026 vest is this year's salary but next year's Schedule FA. There is
+no minimum value and no income requirement: a resident and ordinarily resident
+must report every foreign asset held at any point in that year. Omitting one
+attracts a flat ₹10 lakh under sections 42 and 43 of the Black Money Act,
+charged on the non-disclosure itself, so it applies just as fully when the tax
+was paid correctly. Table A2 (the custodial account) and Table A3 (the shares)
+are both generated, and a missing entity address is flagged before the portal
+rejects it.
 
 **Picks the form and explains why.** ITR-1 versus ITR-2 versus ITR-4, with every
 disqualification listed. Filing the wrong form makes a return defective under
@@ -162,7 +224,7 @@ threshold, the capital-gains buckets, loss set-off ordering, the Chapter VI-A
 ceilings and the interest sections.
 
 ```bash
-pytest tests/ -q          # 101 tests
+pytest tests/ -q          # 143 tests
 ```
 
 Two invariants worth knowing about, because they are easy to get wrong:
@@ -174,6 +236,12 @@ Two invariants worth knowing about, because they are easy to get wrong:
 - **Money is `Decimal` everywhere.** A 0.005 float drift is the difference
   between a return that matches the department's computation and one that
   attracts a demand notice.
+- **A US share is not a listed share.** Sections 111A and 112A need securities
+  transaction tax. Foreign equity therefore takes 24 months to turn long term
+  and gets no ₹1.25 lakh exemption — applying the Indian equity rules to it
+  understates the tax badly.
+- **Schedule FA is on the calendar year.** Nothing else in the return is, so the
+  figures deliberately do not tie to the rest of it.
 
 ---
 
@@ -184,8 +252,12 @@ Two invariants worth knowing about, because they are easy to get wrong:
   filing pack still work; only JSON generation is absent.
 - **ITR-4 JSON** — presumptive income under 44AD, 44ADA and 44AE is computed and
   appears in the filing pack, but the JSON is not generated yet.
-- **Non-resident taxation**, DTAA relief under sections 90 and 91, and relief
-  under section 89 for arrears.
+- **Non-resident taxation**, and relief under section 89 for salary arrears.
+  Section 90 relief on foreign income *is* computed; section 91 relief, for
+  countries India has no treaty with, is not.
+- **ESOPs with deferred taxation** under section 191(2) for eligible start-ups.
+- **Currencies other than USD** are converted through a cross-rate off USD,
+  which is cruder than the direct rate. Enter the rate by hand for EUR or GBP.
 - **F&O and speculative business income**, which are business heads, not capital
   gains.
 - **Scanned documents.** There is no OCR. Download the digitally generated PDF
@@ -209,7 +281,14 @@ app/
   parsers/
     base.py           PDF text and table extraction, decryption, field scraping
     registry.py       Document identification and dispatch
-    form16.py  form26as.py  ais.py  bank.py  broker.py
+    form16.py  form26as.py  ais.py  bank.py  broker.py  us_equity.py
+  foreign/
+    forex.py          Rule 115 conversion, and which months still need a rate
+    rsu.py            Vesting, lot tracking, FIFO matching, the 24-month test
+    dividends.py      Gross-up, reinvestment, the treaty withholding cap
+    ftc.py            Section 90 credit under Rule 128, and Form 67
+    schedule_fa.py    Calendar-year foreign asset disclosure
+    pipeline.py       Folds all of the above into ordinary return entries
   itr/
     selector.py       Which ITR form, and why
     json_builder.py   ITR-1 and ITR-2 JSON
@@ -218,7 +297,7 @@ app/
   merge.py            Applying reviewed extractions, with de-duplication
   report.py           The computation-sheet PDF
   main.py             Routes
-tests/                101 tests
+tests/                143 tests
 ```
 
 Adding an assessment year is a data edit in `tax/rules.py`, not a code change —
@@ -254,6 +333,13 @@ table, the ₹12,00,000 rebate ceiling with a ₹60,000 maximum rebate, and the
 ₹75,000 standard deduction — together with the capital-gains regime introduced
 by the Finance (No. 2) Act 2024 with effect from 23 July 2024. AY 2025-26 is
 retained so that a belated or updated return can still be prepared.
+
+Foreign equity follows sections 17(2)(vi) and 49(2AA) for vesting and cost
+basis, section 112 for gains on shares not listed on a recognised Indian stock
+exchange, Rule 115 for currency conversion, section 90 with Rule 128 and Form 67
+for the foreign tax credit, Article 10 of the India-US treaty for the 25%
+dividend withholding cap, and the Black Money (Undisclosed Foreign Income and
+Assets) and Imposition of Tax Act 2015 for Schedule FA.
 
 ---
 

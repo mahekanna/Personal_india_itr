@@ -35,7 +35,11 @@ from .reconcile import reconcile
 from .schemas import (
     BankAccount,
     CapitalGainItem,
+    DividendReceipt,
+    ForeignHolding,
+    ForeignSale,
     HouseProperty,
+    RSUVest,
     SalaryIncome,
     TaxPayment,
     TaxReturn,
@@ -348,11 +352,169 @@ async def save_income(
 
     record.save(tr)
     session.commit()
-    return RedirectResponse(f"/returns/{return_id}/compare", status_code=303)
+    return RedirectResponse(f"/returns/{return_id}/foreign", status_code=303)
 
 
 # --------------------------------------------------------------------------
-# Step 4 — regime comparison
+# Step 4 — foreign income
+# --------------------------------------------------------------------------
+
+
+@app.get("/returns/{return_id}/foreign", response_class=HTMLResponse)
+def foreign_page(
+    request: Request, return_id: str, session: Session = Depends(db_session)
+):
+    from .foreign.forex import ForexTable, preceding_month
+    from .foreign.pipeline import apply_foreign
+
+    record = _load(session, return_id)
+    tr = record.load()
+    _, foreign = apply_foreign(tr)
+
+    # Which months the user should look a rate up for, and what is in use now.
+    forex = ForexTable(tr.foreign_settings.forex_overrides)
+    dates = (
+        [v.vest_date for v in tr.rsu_vests]
+        + [d.pay_date for d in tr.dividends]
+        + [s.sale_date for s in tr.foreign_sales]
+    )
+    months = sorted({preceding_month(d) for d in dates if d})
+    rate_rows = []
+    for month in months:
+        try:
+            rate = forex.rate_for_month(month, "USD")
+            rate_rows.append({
+                "month": month, "value": rate.value,
+                "provisional": rate.provisional, "source": rate.source,
+            })
+        except Exception:  # noqa: BLE001 - a missing rate is a row to fill in
+            rate_rows.append({
+                "month": month, "value": "", "provisional": True,
+                "source": "Not on file — enter it",
+            })
+
+    return render("foreign.html",
+        _ctx(request, record, step=4, foreign=foreign, rate_rows=rate_rows),
+    )
+
+
+@app.post("/returns/{return_id}/foreign")
+async def save_foreign(
+    request: Request, return_id: str, session: Session = Depends(db_session)
+):
+    record = _load(session, return_id)
+    tr = record.load()
+    raw = await request.form()
+    form = dict(raw)
+
+    tr.rsu_vests = _collect_vests(raw)
+    tr.dividends = _collect_dividends(raw)
+    tr.foreign_sales = _collect_foreign_sales(raw)
+    tr.foreign_holdings = _collect_holdings(raw)
+
+    settings = tr.foreign_settings
+    settings.form67_filed = form.get("form67_filed") == "on"
+    settings.form67_ack = form.get("form67_ack", "")
+    settings.lot_matching = form.get("lot_matching", "fifo")
+
+    overrides: Dict[str, Dict[str, str]] = dict(settings.forex_overrides)
+    for row in _indexed(raw, "fx"):
+        month = row.get("month", "")
+        value = row.get("usd", "").strip()
+        if month and value:
+            overrides.setdefault(month, {})["USD"] = value
+        elif month and month in overrides:
+            overrides[month].pop("USD", None)
+    settings.forex_overrides = {k: v for k, v in overrides.items() if v}
+
+    record.save(tr)
+    session.commit()
+    return RedirectResponse(f"/returns/{return_id}/compare", status_code=303)
+
+
+def _collect_vests(form) -> List[RSUVest]:
+    out: List[RSUVest] = []
+    for row in _indexed(form, "vest"):
+        shares = D(row.get("shares_vested", 0))
+        if shares <= 0:
+            continue
+        out.append(RSUVest(
+            symbol=row.get("symbol", "").upper(),
+            company_name=row.get("company_name", ""),
+            grant_id=row.get("grant_id", ""),
+            vest_date=_parse_iso_date(row.get("vest_date", "")),
+            shares_vested=shares,
+            fmv_per_share_fx=D(row.get("fmv_per_share_fx", 0)),
+            shares_sold_to_cover=D(row.get("shares_sold_to_cover", 0)),
+            sale_price_per_share_fx=D(row.get("sale_price_per_share_fx", 0)),
+            currency=row.get("currency", "USD") or "USD",
+            included_in_form16=row.get("included_in_form16") == "on",
+            forex_rate_override=D(row["forex_rate_override"])
+            if row.get("forex_rate_override") else None,
+        ))
+    return out
+
+
+def _collect_dividends(form) -> List[DividendReceipt]:
+    out: List[DividendReceipt] = []
+    for row in _indexed(form, "div"):
+        gross = D(row.get("gross_amount_fx", 0))
+        if gross <= 0:
+            continue
+        out.append(DividendReceipt(
+            symbol=row.get("symbol", "").upper(),
+            pay_date=_parse_iso_date(row.get("pay_date", "")),
+            gross_amount_fx=gross,
+            foreign_tax_withheld_fx=D(row.get("foreign_tax_withheld_fx", 0)),
+            currency=row.get("currency", "USD") or "USD",
+            is_reinvested=row.get("is_reinvested") == "on",
+            shares_acquired=D(row.get("shares_acquired", 0)),
+            reinvest_price_per_share_fx=D(row.get("reinvest_price_per_share_fx", 0)),
+        ))
+    return out
+
+
+def _collect_foreign_sales(form) -> List[ForeignSale]:
+    out: List[ForeignSale] = []
+    for row in _indexed(form, "fsale"):
+        shares = D(row.get("shares", 0))
+        if shares <= 0:
+            continue
+        out.append(ForeignSale(
+            symbol=row.get("symbol", "").upper(),
+            sale_date=_parse_iso_date(row.get("sale_date", "")),
+            shares=shares,
+            price_per_share_fx=D(row.get("price_per_share_fx", 0)),
+            fees_fx=D(row.get("fees_fx", 0)),
+            currency=row.get("currency", "USD") or "USD",
+        ))
+    return out
+
+
+def _collect_holdings(form) -> List[ForeignHolding]:
+    out: List[ForeignHolding] = []
+    for row in _indexed(form, "hold"):
+        symbol = row.get("symbol", "").upper()
+        if not symbol:
+            continue
+        out.append(ForeignHolding(
+            symbol=symbol,
+            entity_name=row.get("entity_name", ""),
+            entity_address=row.get("entity_address", ""),
+            entity_zip=row.get("entity_zip", ""),
+            broker_name=row.get("broker_name", ""),
+            broker_address=row.get("broker_address", ""),
+            broker_account_number=row.get("broker_account_number", ""),
+            peak_price_fx=D(row.get("peak_price_fx", 0)),
+            year_end_price_fx=D(row.get("year_end_price_fx", 0)),
+            opening_shares=D(row.get("opening_shares", 0)),
+            opening_value_inr=D(row.get("opening_value_inr", 0)),
+        ))
+    return out
+
+
+# --------------------------------------------------------------------------
+# Step 5 — regime comparison
 # --------------------------------------------------------------------------
 
 
@@ -363,13 +525,14 @@ def compare_page(
     record = _load(session, return_id)
     tr = record.load()
     comparison = compare_regimes(tr)
+    tr = comparison.prepared or tr
     extractions = [
         _decode_extraction(document.load_extraction())
         for document in record.documents
     ]
     report = reconcile(tr, extractions)
     return render("compare.html",
-        _ctx(request, record, step=4, comparison=comparison, report=report,
+        _ctx(request, record, step=5, comparison=comparison, report=report,
              chosen=comparison.chosen),
     )
 
@@ -389,7 +552,7 @@ def choose_regime(
 
 
 # --------------------------------------------------------------------------
-# Step 5 — filing pack
+# Step 6 — filing pack
 # --------------------------------------------------------------------------
 
 
@@ -401,6 +564,10 @@ def file_page(
     tr = record.load()
     comparison = compare_regimes(tr)
     comp = comparison.chosen
+    # Everything downstream works off the prepared return — the one with RSU
+    # perquisite, foreign capital gains and Schedule FA rows already folded in.
+    # Using the raw return here would silently drop all of it from the JSON.
+    tr = comparison.prepared or tr
     decision = select_form(tr)
     pack = pack_builder.build_filing_pack(tr, comp, decision.form)
     extractions = [
@@ -417,7 +584,7 @@ def file_page(
             json_error = str(exc)
 
     return render("file.html",
-        _ctx(request, record, step=5, comp=comp, decision=decision, pack=pack,
+        _ctx(request, record, step=6, comp=comp, decision=decision, pack=pack,
              report=report, json_error=json_error, comparison=comparison),
     )
 
@@ -426,7 +593,9 @@ def file_page(
 def download_itr_json(return_id: str, session: Session = Depends(db_session)):
     record = _load(session, return_id)
     tr = record.load()
-    comp = compare_regimes(tr).chosen
+    comparison = compare_regimes(tr)
+    comp = comparison.chosen
+    tr = comparison.prepared or tr
     decision = select_form(tr)
     try:
         payload = json_builder.build(tr, comp, decision.form)
@@ -451,6 +620,7 @@ def download_computation(return_id: str, session: Session = Depends(db_session))
     record = _load(session, return_id)
     tr = record.load()
     comparison = compare_regimes(tr)
+    tr = comparison.prepared or tr
     decision = select_form(tr)
     pdf = build_computation_pdf(tr, comparison, decision)
     filename = f"Computation_{tr.taxpayer.pan or 'ITR'}_AY{tr.assessment_year}.pdf"
@@ -684,6 +854,9 @@ def _encode_extraction(extraction: Extraction) -> str:
         "payments": convert(extraction.payments),
         "capital_gains": convert(extraction.capital_gains),
         "house_properties": convert(extraction.house_properties),
+        "rsu_vests": convert(extraction.rsu_vests),
+        "dividends": convert(extraction.dividends),
+        "foreign_sales": convert(extraction.foreign_sales),
         "warnings": extraction.warnings,
         "raw_text_excerpt": extraction.raw_text_excerpt,
     })
@@ -720,6 +893,9 @@ def _decode_extraction(payload: Dict[str, Any]) -> Extraction:
     extraction.payments = convert(payload.get("payments", []))
     extraction.capital_gains = convert(payload.get("capital_gains", []))
     extraction.house_properties = convert(payload.get("house_properties", []))
+    extraction.rsu_vests = convert(payload.get("rsu_vests", []))
+    extraction.dividends = convert(payload.get("dividends", []))
+    extraction.foreign_sales = convert(payload.get("foreign_sales", []))
     extraction.warnings = payload.get("warnings", [])
     extraction.raw_text_excerpt = payload.get("raw_text_excerpt", "")
     return extraction

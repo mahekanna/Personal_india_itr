@@ -1,0 +1,561 @@
+{% extends "base.html" %}
+{% block title %}Foreign income · Personal India ITR{% endblock %}
+{% block content %}
+
+<h1>RSUs, dividends and foreign shares</h1>
+<p class="lede">
+  Three separate taxable moments, and they are easy to run together. Vesting is
+  salary. Dividends are income the day they are declared, reinvested or not.
+  Selling is capital gains, on a <strong>24-month</strong> clock — not the
+  12-month one that applies to Indian listed shares.
+</p>
+
+{% if foreign.warnings %}
+<section class="card">
+  <div class="card-head"><h2>Read this before you file</h2></div>
+  {% for warning in foreign.warnings %}
+  <div class="note note-warning">{{ warning }}</div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<form method="post" action="/returns/{{ record.id }}/foreign">
+
+<!-- ---------------- vesting ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>RSU and ESPP vesting</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="vest">
+      + Add a vest
+    </button>
+  </div>
+  <p class="hint">
+    Section 17(2)(vi) taxes the fair market value on the vesting date as a
+    perquisite, at slab rates. Your employer normally runs it through payroll
+    and it is already inside the Form 16 — leave the box ticked when it is, or
+    it gets counted twice.
+  </p>
+
+  <div data-repeat="vest">
+    {% for vest in tr.rsu_vests %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Vest <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Symbol</label>
+          <input type="text" name="vest_{{ loop.index0 }}_symbol" value="{{ vest.symbol }}"></div>
+        <div class="field"><label>Company</label>
+          <input type="text" name="vest_{{ loop.index0 }}_company_name" value="{{ vest.company_name }}"></div>
+        <div class="field"><label>Grant number</label>
+          <input type="text" name="vest_{{ loop.index0 }}_grant_id" value="{{ vest.grant_id }}"></div>
+        <div class="field"><label>Vest date</label>
+          <input type="date" name="vest_{{ loop.index0 }}_vest_date" value="{{ vest.vest_date or '' }}"></div>
+        <div class="field"><label>Shares vested</label>
+          <input type="number" step="0.0001" name="vest_{{ loop.index0 }}_shares_vested" value="{{ vest.shares_vested }}"></div>
+        <div class="field"><label>Fair market value per share ({{ vest.currency }})</label>
+          <input type="number" step="0.0001" name="vest_{{ loop.index0 }}_fmv_per_share_fx" value="{{ vest.fmv_per_share_fx }}"></div>
+        <div class="field"><label>Shares sold to cover tax</label>
+          <input type="number" step="0.0001" name="vest_{{ loop.index0 }}_shares_sold_to_cover" value="{{ vest.shares_sold_to_cover }}"></div>
+        <div class="field"><label>Price they were sold at</label>
+          <input type="number" step="0.0001" name="vest_{{ loop.index0 }}_sale_price_per_share_fx" value="{{ vest.sale_price_per_share_fx }}"></div>
+        <div class="field"><label>Exchange rate override (optional)</label>
+          <input type="number" step="0.0001" name="vest_{{ loop.index0 }}_forex_rate_override" value="{{ vest.forex_rate_override or '' }}"></div>
+      </div>
+      <div class="field-inline">
+        <input type="checkbox" id="v16_{{ loop.index0 }}" name="vest_{{ loop.index0 }}_included_in_form16"
+               {% if vest.included_in_form16 %}checked{% endif %}>
+        <label for="v16_{{ loop.index0 }}">
+          Already included in my Form 16 perquisite under section 17(2)
+        </label>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Vest <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Symbol</label>
+            <input type="text" name="vest___INDEX___symbol"></div>
+          <div class="field"><label>Company</label>
+            <input type="text" name="vest___INDEX___company_name"></div>
+          <div class="field"><label>Grant number</label>
+            <input type="text" name="vest___INDEX___grant_id"></div>
+          <div class="field"><label>Vest date</label>
+            <input type="date" name="vest___INDEX___vest_date"></div>
+          <div class="field"><label>Shares vested</label>
+            <input type="number" step="0.0001" name="vest___INDEX___shares_vested" value="0"></div>
+          <div class="field"><label>Fair market value per share (USD)</label>
+            <input type="number" step="0.0001" name="vest___INDEX___fmv_per_share_fx" value="0"></div>
+          <div class="field"><label>Shares sold to cover tax</label>
+            <input type="number" step="0.0001" name="vest___INDEX___shares_sold_to_cover" value="0"></div>
+          <div class="field"><label>Price they were sold at</label>
+            <input type="number" step="0.0001" name="vest___INDEX___sale_price_per_share_fx" value="0"></div>
+          <div class="field"><label>Exchange rate override (optional)</label>
+            <input type="number" step="0.0001" name="vest___INDEX___forex_rate_override"></div>
+        </div>
+        <div class="field-inline">
+          <input type="checkbox" name="vest___INDEX___included_in_form16" checked>
+          <label>Already included in my Form 16 perquisite under section 17(2)</label>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  {% if foreign.vests.vests %}
+  <h3 style="margin-top:1rem">What that works out to</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Vest</th><th class="num">Shares</th><th class="num">FMV</th>
+               <th class="num">Rate (Rule 115)</th><th class="num">Perquisite</th></tr></thead>
+    <tbody>
+      {% for v in foreign.vests.vests %}
+      <tr>
+        <td>{{ v.vest.symbol }} — {{ v.vest.vest_date }}
+          {% if v.error %}<div class="doc-meta" style="color:var(--danger)">{{ v.error }}</div>{% endif %}
+        </td>
+        <td class="num">{{ v.vest.shares_vested }}</td>
+        <td class="num">{{ v.vest.currency }} {{ v.vest.fmv_per_share_fx }}</td>
+        <td class="num">
+          {% if v.rate %}{{ v.rate.value }}
+            {% if v.rate.provisional %}<div class="doc-meta">provisional</div>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="num">{{ v.perquisite_inr | inr }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="row-total">
+        <td colspan="4">Total perquisite</td>
+        <td class="num">{{ foreign.vests.total_perquisite_inr | inr }}</td>
+      </tr>
+      {% if foreign.perquisite_added_to_salary %}
+      <tr><td colspan="4">Added to salary (not already in Form 16)</td>
+          <td class="num">{{ foreign.perquisite_added_to_salary | inr }}</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+
+<!-- ---------------- dividends ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>Dividends</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="div">
+      + Add a dividend
+    </button>
+  </div>
+  <p class="hint">
+    Enter the <strong>gross</strong> dividend, before the tax the US withheld —
+    India taxes the gross and gives the withholding back as a credit. Tick
+    "reinvested" when it bought more shares instead of paying out: it is still
+    income this year, and it starts a new 24-month clock on the shares it buys.
+  </p>
+
+  <div data-repeat="div">
+    {% for dividend in tr.dividends %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Dividend <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Symbol</label>
+          <input type="text" name="div_{{ loop.index0 }}_symbol" value="{{ dividend.symbol }}"></div>
+        <div class="field"><label>Payment date</label>
+          <input type="date" name="div_{{ loop.index0 }}_pay_date" value="{{ dividend.pay_date or '' }}"></div>
+        <div class="field"><label>Gross amount ({{ dividend.currency }})</label>
+          <input type="number" step="0.01" name="div_{{ loop.index0 }}_gross_amount_fx" value="{{ dividend.gross_amount_fx }}"></div>
+        <div class="field"><label>Tax withheld abroad</label>
+          <input type="number" step="0.01" name="div_{{ loop.index0 }}_foreign_tax_withheld_fx" value="{{ dividend.foreign_tax_withheld_fx }}"></div>
+        <div class="field"><label>Shares bought by reinvestment</label>
+          <input type="number" step="0.0001" name="div_{{ loop.index0 }}_shares_acquired" value="{{ dividend.shares_acquired }}"></div>
+        <div class="field"><label>Reinvestment price per share</label>
+          <input type="number" step="0.0001" name="div_{{ loop.index0 }}_reinvest_price_per_share_fx" value="{{ dividend.reinvest_price_per_share_fx }}"></div>
+      </div>
+      <div class="field-inline">
+        <input type="checkbox" id="dr_{{ loop.index0 }}" name="div_{{ loop.index0 }}_is_reinvested"
+               {% if dividend.is_reinvested %}checked{% endif %}>
+        <label for="dr_{{ loop.index0 }}">This dividend was reinvested</label>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Dividend <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Symbol</label>
+            <input type="text" name="div___INDEX___symbol"></div>
+          <div class="field"><label>Payment date</label>
+            <input type="date" name="div___INDEX___pay_date"></div>
+          <div class="field"><label>Gross amount (USD)</label>
+            <input type="number" step="0.01" name="div___INDEX___gross_amount_fx" value="0"></div>
+          <div class="field"><label>Tax withheld abroad</label>
+            <input type="number" step="0.01" name="div___INDEX___foreign_tax_withheld_fx" value="0"></div>
+          <div class="field"><label>Shares bought by reinvestment</label>
+            <input type="number" step="0.0001" name="div___INDEX___shares_acquired" value="0"></div>
+          <div class="field"><label>Reinvestment price per share</label>
+            <input type="number" step="0.0001" name="div___INDEX___reinvest_price_per_share_fx" value="0"></div>
+        </div>
+        <div class="field-inline">
+          <input type="checkbox" name="div___INDEX___is_reinvested">
+          <label>This dividend was reinvested</label>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  {% if foreign.dividends.lines %}
+  <div class="grid grid-3" style="margin-top:1rem">
+    <div class="stat">
+      <div class="stat-label">Gross dividend income</div>
+      <div class="stat-value" style="font-size:1.15rem">₹{{ foreign.dividends.total_gross_inr | inr }}</div>
+      <div class="stat-note">taxed at slab rates under Other Sources</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Tax withheld abroad</div>
+      <div class="stat-value" style="font-size:1.15rem">₹{{ foreign.dividends.total_foreign_tax_inr | inr }}</div>
+      <div class="stat-note">creditable ₹{{ foreign.dividends.total_creditable_inr | inr }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Reinvested</div>
+      <div class="stat-value" style="font-size:1.15rem">₹{{ foreign.dividends.reinvested_value_inr | inr }}</div>
+      <div class="stat-note">{{ foreign.dividends.reinvested_count }} payment(s), still taxable</div>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<!-- ---------------- sales ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>Sales of foreign shares</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="fsale">
+      + Add a sale
+    </button>
+  </div>
+  <p class="hint">
+    Enter the disposal only — the cost basis is worked out for you by matching
+    it first-in-first-out against your vesting tranches and reinvestment lots.
+    Sell-to-cover on the vest date is added automatically.
+  </p>
+
+  <div data-repeat="fsale">
+    {% for sale in tr.foreign_sales %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Sale <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Symbol</label>
+          <input type="text" name="fsale_{{ loop.index0 }}_symbol" value="{{ sale.symbol }}"></div>
+        <div class="field"><label>Sale date</label>
+          <input type="date" name="fsale_{{ loop.index0 }}_sale_date" value="{{ sale.sale_date or '' }}"></div>
+        <div class="field"><label>Shares sold</label>
+          <input type="number" step="0.0001" name="fsale_{{ loop.index0 }}_shares" value="{{ sale.shares }}"></div>
+        <div class="field"><label>Price per share ({{ sale.currency }})</label>
+          <input type="number" step="0.0001" name="fsale_{{ loop.index0 }}_price_per_share_fx" value="{{ sale.price_per_share_fx }}"></div>
+        <div class="field"><label>Commission and fees</label>
+          <input type="number" step="0.01" name="fsale_{{ loop.index0 }}_fees_fx" value="{{ sale.fees_fx }}"></div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Sale <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Symbol</label>
+            <input type="text" name="fsale___INDEX___symbol"></div>
+          <div class="field"><label>Sale date</label>
+            <input type="date" name="fsale___INDEX___sale_date"></div>
+          <div class="field"><label>Shares sold</label>
+            <input type="number" step="0.0001" name="fsale___INDEX___shares" value="0"></div>
+          <div class="field"><label>Price per share (USD)</label>
+            <input type="number" step="0.0001" name="fsale___INDEX___price_per_share_fx" value="0"></div>
+          <div class="field"><label>Commission and fees</label>
+            <input type="number" step="0.01" name="fsale___INDEX___fees_fx" value="0"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  {% if foreign.capital_gain_items %}
+  <h3 style="margin-top:1rem">Matched against your lots</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Lot</th><th>Bucket</th><th class="num">Sale</th>
+               <th class="num">Cost</th><th class="num">Gain</th></tr></thead>
+    <tbody>
+      {% for item in foreign.capital_gain_items %}
+      <tr>
+        <td>{{ item.description }}</td>
+        <td>
+          {% if item.category == 'ltcg_112_foreign' %}
+            <span class="pill">Long term · 12.5%</span>
+          {% else %}
+            <span class="pill pill-quiet">Short term · slab rate</span>
+          {% endif %}
+        </td>
+        <td class="num">{{ item.sale_consideration | inr }}</td>
+        <td class="num">{{ item.cost_of_acquisition | inr }}</td>
+        <td class="num">{{ item.net_gain | inr }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  {% if foreign.closing_lots %}
+  <h3 style="margin-top:1rem">Still held</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Symbol</th><th>Acquired</th><th>How</th>
+               <th class="num">Shares</th><th class="num">Cost</th>
+               <th>Turns long term</th></tr></thead>
+    <tbody>
+      {% for lot in foreign.closing_lots %}
+      <tr>
+        <td>{{ lot.symbol }}</td>
+        <td>{{ lot.acquired }}</td>
+        <td>{{ lot.origin | replace('_', ' ') }}</td>
+        <td class="num">{{ lot.shares }}</td>
+        <td class="num">{{ lot.cost_inr | inr }}</td>
+        <td>
+          {% if lot.acquired %}
+            {{ lot.acquired.replace(year=lot.acquired.year + 2) }}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">
+    Holding each lot until the date in the last column drops the rate from your
+    slab rate to 12.5%.
+  </p>
+  {% endif %}
+</section>
+
+<!-- ---------------- exchange rates ---------------- -->
+<section class="card">
+  <div class="card-head"><h2>Exchange rates — Rule 115</h2></div>
+  <p class="hint">
+    Rule 115 does not let you choose. Every transaction converts at the SBI
+    telegraphic transfer buying rate on the <strong>last day of the month
+    before</strong> it — so a vest on 15 September uses the 31 August rate.
+    The rates below are built-in approximations until you replace them.
+  </p>
+
+  {% if rate_rows %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Rate as on the last day of</th><th class="num">USD to INR</th>
+               <th>Where it came from</th></tr></thead>
+    <tbody>
+      {% for row in rate_rows %}
+      <tr>
+        <td>
+          {{ row.month }}
+          <input type="hidden" name="fx_{{ loop.index0 }}_month" value="{{ row.month }}">
+        </td>
+        <td class="num" style="max-width:9rem">
+          <input type="number" step="0.0001" name="fx_{{ loop.index0 }}_usd"
+                 value="{{ row.value }}">
+        </td>
+        <td>
+          {% if row.provisional %}
+            <span class="pill" style="background:var(--warn-soft); color:var(--warn)">
+              Verify this
+            </span>
+          {% else %}
+            <span class="pill">Confirmed by you</span>
+          {% endif %}
+          <div class="doc-meta">{{ row.source }}</div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty">No foreign transactions yet, so no rates are needed.</p>
+  {% endif %}
+</section>
+
+<!-- ---------------- Schedule FA ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>Schedule FA — foreign assets</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="hold">
+      + Add a holding
+    </button>
+  </div>
+  <div class="note note-error">
+    <strong>This is the part with a ₹10 lakh penalty attached</strong>
+    Schedule FA runs on the <strong>calendar year</strong>
+    {% if foreign.schedule_fa.calendar_year %}
+      ({{ foreign.schedule_fa.period_start.strftime('%d %b %Y') }} to
+      {{ foreign.schedule_fa.period_end.strftime('%d %b %Y') }}),
+    {% endif %}
+    not the financial year, and there is no minimum value. A resident and
+    ordinarily resident must report every foreign asset held at any point in
+    that year, whether or not it earned anything. Omitting one attracts a flat
+    ₹10 lakh under sections 42 and 43 of the Black Money Act — charged on the
+    non-disclosure, not on any tax avoided.
+  </div>
+
+  <p class="hint">
+    The registered address and the year's peak price are not in any broker
+    export, so they have to be entered once per holding.
+  </p>
+
+  <div data-repeat="hold">
+    {% for holding in tr.foreign_holdings %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Holding <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Symbol</label>
+          <input type="text" name="hold_{{ loop.index0 }}_symbol" value="{{ holding.symbol }}"></div>
+        <div class="field"><label>Company's registered name</label>
+          <input type="text" name="hold_{{ loop.index0 }}_entity_name" value="{{ holding.entity_name }}"></div>
+        <div class="field"><label>Registered address</label>
+          <input type="text" name="hold_{{ loop.index0 }}_entity_address" value="{{ holding.entity_address }}"></div>
+        <div class="field"><label>ZIP code</label>
+          <input type="text" name="hold_{{ loop.index0 }}_entity_zip" value="{{ holding.entity_zip }}"></div>
+        <div class="field"><label>Broker (custodial account)</label>
+          <input type="text" name="hold_{{ loop.index0 }}_broker_name" value="{{ holding.broker_name }}"></div>
+        <div class="field"><label>Broker account number</label>
+          <input type="text" name="hold_{{ loop.index0 }}_broker_account_number" value="{{ holding.broker_account_number }}"></div>
+        <div class="field"><label>Highest price during the calendar year</label>
+          <input type="number" step="0.01" name="hold_{{ loop.index0 }}_peak_price_fx" value="{{ holding.peak_price_fx }}"></div>
+        <div class="field"><label>Price on 31 December</label>
+          <input type="number" step="0.01" name="hold_{{ loop.index0 }}_year_end_price_fx" value="{{ holding.year_end_price_fx }}"></div>
+        <div class="field"><label>Shares held before 1 January</label>
+          <input type="number" step="0.0001" name="hold_{{ loop.index0 }}_opening_shares" value="{{ holding.opening_shares }}"></div>
+        <div class="field"><label>Their cost (₹)</label>
+          <input type="number" step="1" name="hold_{{ loop.index0 }}_opening_value_inr" value="{{ holding.opening_value_inr }}"></div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Holding <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Symbol</label>
+            <input type="text" name="hold___INDEX___symbol"></div>
+          <div class="field"><label>Company's registered name</label>
+            <input type="text" name="hold___INDEX___entity_name"></div>
+          <div class="field"><label>Registered address</label>
+            <input type="text" name="hold___INDEX___entity_address"></div>
+          <div class="field"><label>ZIP code</label>
+            <input type="text" name="hold___INDEX___entity_zip"></div>
+          <div class="field"><label>Broker (custodial account)</label>
+            <input type="text" name="hold___INDEX___broker_name"></div>
+          <div class="field"><label>Broker account number</label>
+            <input type="text" name="hold___INDEX___broker_account_number"></div>
+          <div class="field"><label>Highest price during the calendar year</label>
+            <input type="number" step="0.01" name="hold___INDEX___peak_price_fx" value="0"></div>
+          <div class="field"><label>Price on 31 December</label>
+            <input type="number" step="0.01" name="hold___INDEX___year_end_price_fx" value="0"></div>
+          <div class="field"><label>Shares held before 1 January</label>
+            <input type="number" step="0.0001" name="hold___INDEX___opening_shares" value="0"></div>
+          <div class="field"><label>Their cost (₹)</label>
+            <input type="number" step="1" name="hold___INDEX___opening_value_inr" value="0"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  {% if foreign.schedule_fa.rows %}
+  <h3 style="margin-top:1rem">
+    Schedule FA rows for calendar {{ foreign.schedule_fa.calendar_year }}
+  </h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Table</th><th>Entity</th><th class="num">Initial</th>
+               <th class="num">Peak</th><th class="num">Closing</th>
+               <th class="num">Income and proceeds</th></tr></thead>
+    <tbody>
+      {% for row in foreign.schedule_fa.rows %}
+      <tr>
+        <td><span class="pill">{{ row.table }}</span></td>
+        <td>{{ row.entity_name }}
+          <div class="doc-meta">{{ row.nature_of_entity }}</div>
+        </td>
+        <td class="num">{{ row.initial_investment | inr }}</td>
+        <td class="num">{{ row.peak_value | inr }}</td>
+        <td class="num">{{ row.closing_value | inr }}</td>
+        <td class="num">{{ row.gross_income_accrued | inr }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  {% for note in foreign.schedule_fa.estimates %}
+  <div class="note note-warning">{{ note }}</div>
+  {% endfor %}
+</section>
+
+<!-- ---------------- Form 67 ---------------- -->
+<section class="card">
+  <div class="card-head"><h2>Foreign tax credit — Form 67</h2></div>
+  <p class="hint">
+    Rule 128(9) wants Form 67 on the portal <strong>before</strong> the return.
+    Tribunals have held the requirement to be procedural, but CPC denies the
+    credit first and makes you argue afterwards. File it first: e-File → Income
+    Tax Forms → File Income Tax Forms → Form 67.
+  </p>
+  <div class="grid grid-3">
+    <div class="field-inline">
+      <input type="checkbox" id="form67_filed" name="form67_filed"
+             {% if tr.foreign_settings.form67_filed %}checked{% endif %}>
+      <label for="form67_filed">Form 67 has been filed for this year</label>
+    </div>
+    <div class="field">
+      <label for="form67_ack">Acknowledgement number</label>
+      <input type="text" id="form67_ack" name="form67_ack" value="{{ tr.foreign_settings.form67_ack }}">
+    </div>
+    <div class="field">
+      <label for="lot_matching">Lot matching method</label>
+      <select id="lot_matching" name="lot_matching">
+        <option value="fifo" {% if tr.foreign_settings.lot_matching == 'fifo' %}selected{% endif %}>
+          First in, first out (recommended)
+        </option>
+      </select>
+    </div>
+  </div>
+</section>
+
+<div class="actions">
+  <button class="btn" type="submit">Save and compare the regimes →</button>
+  <a class="btn btn-quiet" href="/returns/{{ record.id }}/income">Back to income</a>
+</div>
+
+</form>
+{% endblock %}

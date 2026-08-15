@@ -81,6 +81,7 @@ class Computation:
     total_tax_liability: Decimal = D(0)
 
     interest: InterestResult = field(default_factory=InterestResult)
+    ftc: Optional[object] = None          # foreign.ftc.FTCResult when relevant
 
     tds: Decimal = D(0)
     tcs: Decimal = D(0)
@@ -141,7 +142,21 @@ def basic_exemption_limit(bands) -> Decimal:
 # --------------------------------------------------------------------------
 
 
-def compute(tr: TaxReturn, regime_key: str, ay: AssessmentYear | None = None) -> Computation:
+def compute(
+    tr: TaxReturn,
+    regime_key: str,
+    ay: AssessmentYear | None = None,
+    foreign=None,
+) -> Computation:
+    # RSU vests, dividends and foreign sales are folded into ordinary return
+    # entries first, so nothing below this line needs to know they exist. The
+    # conversion does not depend on the regime, so callers computing both
+    # regimes do it once and pass the result in.
+    if foreign is None:
+        from ..foreign.pipeline import apply_foreign
+
+        tr, foreign = apply_foreign(tr)
+
     ay = ay or get_ay(tr.assessment_year)
     regime: RegimeRules = ay.regimes[regime_key]
     band_key = age_band(tr.taxpayer.date_of_birth, ay)
@@ -273,6 +288,30 @@ def compute(tr: TaxReturn, regime_key: str, ay: AssessmentYear | None = None) ->
     comp.cess = (comp.tax_after_rebate + comp.surcharge) * ay.cess_rate
 
     total_before_relief = comp.tax_after_rebate + comp.surcharge + comp.cess
+
+    # ---- Foreign tax credit — section 90 read with Rule 128 ---------------
+    # Computed here rather than earlier because Rule 128 measures the credit
+    # against the Indian tax actually attributable to the doubly-taxed income,
+    # which is not known until surcharge and cess are on.
+    if foreign is not None and foreign.foreign_tax_payments:
+        from ..foreign.ftc import compute_ftc
+
+        special_rate = None
+        if comp.tax_on_special_income > 0:
+            chargeable = sum((s.chargeable for s in slices), D(0))
+            if chargeable > 0:
+                special_rate = {
+                    "capital_gains": comp.tax_on_special_income / chargeable
+                }
+        comp.ftc = compute_ftc(
+            tr, foreign.foreign_tax_payments,
+            total_income=comp.total_income,
+            tax_before_credit=total_before_relief,
+            special_rate_for=special_rate,
+        )
+        comp.relief_90_91 = comp.ftc.total_credit
+        comp.warnings.extend(comp.ftc.warnings)
+
     comp.total_tax_liability = non_negative(
         total_before_relief - comp.relief_89 - comp.relief_90_91
     )
@@ -478,6 +517,10 @@ class RegimeComparison:
     old: Computation
     recommended: str
     saving: Decimal
+    # The prepared return (with RSU perquisite and foreign gains folded in)
+    # and what the foreign pass produced, for the review screens.
+    prepared: Optional[TaxReturn] = None
+    foreign: Optional[object] = None
 
     @property
     def chosen(self) -> Computation:
@@ -485,9 +528,12 @@ class RegimeComparison:
 
 
 def compare_regimes(tr: TaxReturn, ay: AssessmentYear | None = None) -> RegimeComparison:
-    ay = ay or get_ay(tr.assessment_year)
-    new = compute(tr, "new", ay)
-    old = compute(tr, "old", ay)
+    from ..foreign.pipeline import apply_foreign
+
+    prepared, foreign = apply_foreign(tr)
+    ay = ay or get_ay(prepared.assessment_year)
+    new = compute(prepared, "new", ay, foreign=foreign)
+    old = compute(prepared, "old", ay, foreign=foreign)
 
     new_cost = new.total_tax_liability + new.interest.total_interest
     old_cost = old.total_tax_liability + old.interest.total_interest
@@ -498,4 +544,7 @@ def compare_regimes(tr: TaxReturn, ay: AssessmentYear | None = None) -> RegimeCo
         recommended = "new" if new_cost <= old_cost else "old"
 
     saving = abs(new_cost - old_cost)
-    return RegimeComparison(new=new, old=old, recommended=recommended, saving=saving)
+    return RegimeComparison(
+        new=new, old=old, recommended=recommended, saving=saving,
+        prepared=prepared, foreign=foreign,
+    )

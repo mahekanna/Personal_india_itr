@@ -14,7 +14,10 @@ from .money import D
 from .parsers.base import Extraction
 from .schemas import (
     CapitalGainItem,
+    DividendReceipt,
+    ForeignSale,
     HouseProperty,
+    RSUVest,
     SalaryIncome,
     TaxPayment,
     TaxReturn,
@@ -65,6 +68,22 @@ def apply_extractions(
         for row in extraction.house_properties:
             tr.house_properties.append(HouseProperty(**row))
             log.append("Added a house property")
+
+        added_vests = sum(1 for row in extraction.rsu_vests if _merge_vest(tr, row))
+        if added_vests:
+            log.append(f"Added {added_vests} RSU vesting tranche(s)")
+
+        added_dividends = sum(
+            1 for row in extraction.dividends if _merge_dividend(tr, row)
+        )
+        if added_dividends:
+            log.append(f"Added {added_dividends} dividend payment(s)")
+
+        added_sales = sum(
+            1 for row in extraction.foreign_sales if _merge_foreign_sale(tr, row)
+        )
+        if added_sales:
+            log.append(f"Added {added_sales} foreign share sale(s)")
 
         for warning in extraction.warnings:
             if warning not in tr.notes:
@@ -142,6 +161,43 @@ def _merge_capital_gain(tr: TaxReturn, row: Dict[str, Any]) -> bool:
         ):
             return False
     tr.capital_gains.append(CapitalGainItem(**row))
+    return True
+
+
+def _merge_vest(tr: TaxReturn, row: Dict[str, Any]) -> bool:
+    """A vest is identified by its symbol, date and share count."""
+    for existing in tr.rsu_vests:
+        if (
+            existing.symbol.upper() == str(row.get("symbol", "")).upper()
+            and existing.vest_date == row.get("vest_date")
+            and existing.shares_vested == D(row.get("shares_vested", 0))
+        ):
+            return False
+    tr.rsu_vests.append(RSUVest(**row))
+    return True
+
+
+def _merge_dividend(tr: TaxReturn, row: Dict[str, Any]) -> bool:
+    for existing in tr.dividends:
+        if (
+            existing.symbol.upper() == str(row.get("symbol", "")).upper()
+            and existing.pay_date == row.get("pay_date")
+            and existing.gross_amount_fx == D(row.get("gross_amount_fx", 0))
+        ):
+            return False
+    tr.dividends.append(DividendReceipt(**row))
+    return True
+
+
+def _merge_foreign_sale(tr: TaxReturn, row: Dict[str, Any]) -> bool:
+    for existing in tr.foreign_sales:
+        if (
+            existing.symbol.upper() == str(row.get("symbol", "")).upper()
+            and existing.sale_date == row.get("sale_date")
+            and existing.shares == D(row.get("shares", 0))
+        ):
+            return False
+    tr.foreign_sales.append(ForeignSale(**row))
     return True
 
 
