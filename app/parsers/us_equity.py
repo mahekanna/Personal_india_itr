@@ -399,7 +399,40 @@ def _is_noise(symbol: str) -> bool:
     return symbol.lower() in ("", "total", "totals", "grand total", "subtotal")
 
 
+def _has_anything(row, mapping: Dict[str, str]) -> bool:
+    """Does this row carry any value at all, or is it padding?
+
+    Broker exports are full of blank rows, subtotals and footers. Those are
+    noise. A row with figures in it that the reader could not use is not — it
+    is a tranche or a payment about to go missing.
+    """
+    return any(_cell(row, mapping, key) for key in mapping)
+
+
+def _describe(symbol: str, when: Any, reason: str = "") -> str:
+    parts = [symbol or "a holding"]
+    if when:
+        parts.append(str(when))
+    if reason:
+        parts.append(f"— {reason}")
+    return " ".join(parts)
+
+
+def _report_skipped(out: Extraction, skipped: List[str], what: str) -> None:
+    if not skipped:
+        return
+    out.warnings.append(
+        f"{len(skipped)} {what} row(s) in this file had figures in them but "
+        "were missing something the calculation needs, so they were left out: "
+        + "; ".join(skipped[:3])
+        + (" ..." if len(skipped) > 3 else "")
+        + ". Add them by hand on the Foreign income page — a tranche that is "
+        "silently absent is a tranche the AIS will still show."
+    )
+
+
 def _read_vests(frame, mapping, out: Extraction, filename: str) -> None:
+    skipped: List[str] = []
     for _, row in frame.iterrows():
         vest_date = parse_date(_cell(row, mapping, "vest_date"))
         shares = _money(row, mapping, "shares_vested")
@@ -409,6 +442,18 @@ def _read_vests(frame, mapping, out: Extraction, filename: str) -> None:
         if _is_noise(symbol) and not vest_date:
             continue
         if shares <= 0 or fmv <= 0 or vest_date is None:
+            if _has_anything(row, mapping):
+                missing = [
+                    name for name, ok in (
+                        ("vest date", vest_date is not None),
+                        ("share count", shares > 0),
+                        ("fair market value", fmv > 0),
+                    ) if not ok
+                ]
+                skipped.append(_describe(
+                    symbol, vest_date or _cell(row, mapping, "vest_date"),
+                    f"no {' and no '.join(missing)}",
+                ))
             continue
 
         out.rsu_vests.append({
@@ -424,9 +469,11 @@ def _read_vests(frame, mapping, out: Extraction, filename: str) -> None:
             "country_code": "2",
             "source_document": filename,
         })
+    _report_skipped(out, skipped, "vesting")
 
 
 def _read_espp(frame, mapping, out: Extraction, filename: str) -> None:
+    skipped: List[str] = []
     for _, row in frame.iterrows():
         purchase_date = parse_date(
             _cell(row, mapping, "purchase_date_espp")
@@ -440,9 +487,14 @@ def _read_espp(frame, mapping, out: Extraction, filename: str) -> None:
         fmv = _money(row, mapping, "fmv_at_purchase") or _money(row, mapping, "fmv")
         symbol = _cell(row, mapping, "symbol")
 
-        if purchase_date is None or shares <= 0 or price_paid <= 0:
-            continue
         if _is_noise(symbol) and not fmv:
+            continue
+        if purchase_date is None or shares <= 0 or price_paid <= 0:
+            if _has_anything(row, mapping):
+                skipped.append(_describe(
+                    symbol,
+                    purchase_date or _cell(row, mapping, "purchase_date_espp"),
+                ))
             continue
 
         out.espp_purchases.append({
@@ -459,15 +511,23 @@ def _read_espp(frame, mapping, out: Extraction, filename: str) -> None:
             "country_code": "2",
             "source_document": filename,
         })
+    _report_skipped(out, skipped, "ESPP purchase")
 
 
 def _read_dividends(frame, mapping, out: Extraction, filename: str) -> None:
+    skipped: List[str] = []
     for _, row in frame.iterrows():
         pay_date = parse_date(_cell(row, mapping, "pay_date"))
         gross = _money(row, mapping, "dividend_amount")
         symbol = _cell(row, mapping, "symbol")
 
-        if gross <= 0 or pay_date is None or _is_noise(symbol):
+        if _is_noise(symbol):
+            continue
+        if gross <= 0 or pay_date is None:
+            if _has_anything(row, mapping):
+                skipped.append(_describe(
+                    symbol, pay_date or _cell(row, mapping, "pay_date"),
+                ))
             continue
 
         action = _cell(row, mapping, "action").lower()
@@ -489,16 +549,24 @@ def _read_dividends(frame, mapping, out: Extraction, filename: str) -> None:
             "reinvest_price_per_share_fx": _money(row, mapping, "reinvest_price"),
             "source_document": filename,
         })
+    _report_skipped(out, skipped, "dividend")
 
 
 def _read_sales(frame, mapping, out: Extraction, filename: str) -> None:
+    skipped: List[str] = []
     for _, row in frame.iterrows():
         sale_date = parse_date(_cell(row, mapping, "sale_date"))
         shares = _money(row, mapping, "quantity_sold")
         proceeds = _money(row, mapping, "proceeds")
         symbol = _cell(row, mapping, "symbol")
 
-        if sale_date is None or shares <= 0 or _is_noise(symbol):
+        if _is_noise(symbol):
+            continue
+        if sale_date is None or shares <= 0:
+            if _has_anything(row, mapping):
+                skipped.append(_describe(
+                    symbol, sale_date or _cell(row, mapping, "sale_date"),
+                ))
             continue
 
         price = _money(row, mapping, "sale_price")
@@ -515,6 +583,7 @@ def _read_sales(frame, mapping, out: Extraction, filename: str) -> None:
             "country_code": "2",
             "source_document": filename,
         })
+    _report_skipped(out, skipped, "disposal")
 
 
 def _clean_symbol(raw: str) -> str:

@@ -574,3 +574,49 @@ def test_a_file_that_stays_locked_keeps_its_original_message():
 
     assert results[0].needs_password is True
     assert any("password protected" in w for w in results[0].warnings)
+
+
+# --------------------------------------------------------------------------
+# Parsers must not drop a row in silence
+# --------------------------------------------------------------------------
+
+
+def test_a_vesting_row_the_parser_cannot_use_is_reported():
+    """A tranche missing its fair market value used to disappear without a
+    word, which is the worst possible outcome: the AIS still has it."""
+    from app.parsers.us_equity import parse_tabular
+
+    csv = (
+        "Benefit History - RSU releases\n"
+        "Symbol,Vest Date,Shares Vested,Fair Market Value,Shares Sold\n"
+        "ACME,09/15/2025,100,150.25,31\n"
+        "ACME,12/15/2025,100,,31\n"          # no price
+        "ACME,,100,160.00,31\n"              # no date
+        ",,,,\n"                             # blank padding
+        "Total,,300,,93\n"                   # a footer, not a tranche
+    ).encode()
+    out = parse_tabular(csv, "etrade_benefit_history.csv")
+
+    assert len(out.rsu_vests) == 1
+    skipped = next(w for w in out.warnings if "were left out" in w)
+    assert "2 vesting row(s)" in skipped
+    assert "no fair market value" in skipped
+    assert "no vest date" in skipped
+
+
+def test_blank_and_total_rows_are_not_reported_as_losses():
+    """Padding is noise. Reporting it would train the user to ignore the
+    warning that matters."""
+    from app.parsers.us_equity import parse_tabular
+
+    csv = (
+        "Benefit History - RSU releases\n"
+        "Symbol,Vest Date,Shares Vested,Fair Market Value,Shares Sold\n"
+        "ACME,09/15/2025,100,150.25,31\n"
+        ",,,,\n"
+        "Total,,100,,31\n"
+    ).encode()
+    out = parse_tabular(csv, "etrade_benefit_history.csv")
+
+    assert len(out.rsu_vests) == 1
+    assert not any("were left out" in w for w in out.warnings)
