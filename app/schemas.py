@@ -19,7 +19,14 @@ Money = Decimal
 
 
 class _Base(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    # ``validate_assignment`` matters more here than it looks. Pydantic does not
+    # validate on assignment by default, so a raw form string could be written
+    # straight into a Literal field and persisted; the next load then failed
+    # validation and — because the loader swallowed the error — silently
+    # returned an empty return. One bad value discarded the whole thing.
+    model_config = ConfigDict(
+        populate_by_name=True, extra="ignore", validate_assignment=True
+    )
 
     @field_validator("*", mode="before")
     @classmethod

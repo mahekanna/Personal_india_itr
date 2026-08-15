@@ -55,6 +55,10 @@ from .tax.rules import ASSESSMENT_YEARS, CURRENT_AY, get_ay
 
 BASE_DIR = Path(__file__).resolve().parent
 
+# Values the models accept where a form can only ever send a string.
+_CURRENCIES = ("USD", "INR", "EUR", "GBP")
+_FREQUENCIES = ("monthly", "quarterly", "semiannual", "annual")
+
 app = FastAPI(
     title="Personal India ITR",
     description="Pre-preparation and filing-pack generation for Indian income "
@@ -286,8 +290,12 @@ async def save_income(
     form = dict(await request.form())
     raw = await request.form()
 
-    tr.assessment_year = form.get("assessment_year", tr.assessment_year)
-    tr.regime_choice = form.get("regime_choice", "auto")
+    tr.assessment_year = _choice(
+        form.get("assessment_year"), ASSESSMENT_YEARS, tr.assessment_year
+    )
+    tr.regime_choice = _choice(
+        form.get("regime_choice"), ("auto", "new", "old"), "auto"
+    )
     tr.has_business_income = form.get("has_business_income") == "on"
     filing = form.get("filing_date", "")
     tr.filing_date = _parse_iso_date(filing)
@@ -303,7 +311,9 @@ async def save_income(
     taxpayer.city = form.get("city", taxpayer.city)
     taxpayer.state_code = form.get("state_code", taxpayer.state_code)
     taxpayer.pincode = form.get("pincode", taxpayer.pincode)
-    taxpayer.residential_status = form.get("residential_status", "RES")
+    taxpayer.residential_status = _choice(
+        form.get("residential_status"), ("RES", "NRI", "RNOR"), "RES"
+    )
     taxpayer.has_foreign_assets = form.get("has_foreign_assets") == "on"
     taxpayer.is_company_director = form.get("is_company_director") == "on"
     taxpayer.holds_unlisted_equity = form.get("holds_unlisted_equity") == "on"
@@ -324,7 +334,7 @@ async def save_income(
     # ---- Repeating rows ---------------------------------------------------
     tr.salaries = _collect_salaries(raw)
     tr.house_properties = _collect_house_properties(raw)
-    tr.capital_gains = _collect_capital_gains(raw)
+    tr.capital_gains = _collect_capital_gains(raw, tr.assessment_year)
     tr.taxes_paid.payments = _collect_payments(raw)
 
     # ---- Other sources ----------------------------------------------------
@@ -351,7 +361,9 @@ async def save_income(
     deductions.s80u_severe = form.get("ded_s80u_severe") == "on"
 
     # ---- Business ---------------------------------------------------------
-    tr.business.scheme = form.get("business_scheme", "none")
+    tr.business.scheme = _choice(
+        form.get("business_scheme"), ("none", "44AD", "44ADA", "44AE"), "none"
+    )
     tr.business.gross_turnover_digital = D(form.get("turnover_digital", 0))
     tr.business.gross_turnover_cash = D(form.get("turnover_cash", 0))
     tr.business.gross_receipts_44ada = D(form.get("receipts_44ada", 0))
@@ -427,7 +439,7 @@ async def save_foreign(
     settings = tr.foreign_settings
     settings.form67_filed = form.get("form67_filed") == "on"
     settings.form67_ack = form.get("form67_ack", "")
-    settings.lot_matching = form.get("lot_matching", "fifo")
+    settings.lot_matching = _choice(form.get("lot_matching"), ("fifo", "specific"), "fifo")
 
     overrides: Dict[str, Dict[str, str]] = dict(settings.forex_overrides)
     for row in _indexed(raw, "fx"):
@@ -488,7 +500,7 @@ def _collect_schedules(form) -> List[VestingSchedule]:
             company_name=row.get("company_name", ""),
             grant_date=_parse_iso_date(row.get("grant_date", "")),
             total_shares=total,
-            frequency=row.get("frequency", "quarterly") or "quarterly",
+            frequency=_choice(row.get("frequency"), _FREQUENCIES, "quarterly"),
             first_vest_date=_parse_iso_date(row.get("first_vest_date", "")),
             tranches=int(D(row.get("tranches", 0)) or 16),
             cliff_shares=D(row.get("cliff_shares", 0)),
@@ -533,7 +545,7 @@ def _collect_dividends(form) -> List[DividendReceipt]:
             pay_date=_parse_iso_date(row.get("pay_date", "")),
             gross_amount_fx=gross,
             foreign_tax_withheld_fx=D(row.get("foreign_tax_withheld_fx", 0)),
-            currency=row.get("currency", "USD") or "USD",
+            currency=_choice(row.get("currency"), _CURRENCIES, "USD"),
             is_reinvested=row.get("is_reinvested") == "on",
             shares_acquired=D(row.get("shares_acquired", 0)),
             reinvest_price_per_share_fx=D(row.get("reinvest_price_per_share_fx", 0)),
@@ -561,8 +573,8 @@ def _collect_dividend_schedules(form) -> List[DividendSchedule]:
         out.append(DividendSchedule(
             symbol=symbol,
             company_name=row.get("company_name", ""),
-            currency=row.get("currency", "USD") or "USD",
-            frequency=row.get("frequency", "quarterly") or "quarterly",
+            currency=_choice(row.get("currency"), _CURRENCIES, "USD"),
+            frequency=_choice(row.get("frequency"), _FREQUENCIES, "quarterly"),
             first_pay_date=_parse_iso_date(row.get("first_pay_date", "")),
             payments=int(D(row.get("payments", 0)) or 4),
             dividend_per_share_fx=D(row.get("dividend_per_share_fx", 0)),
@@ -586,7 +598,7 @@ def _collect_foreign_sales(form) -> List[ForeignSale]:
             shares=shares,
             price_per_share_fx=D(row.get("price_per_share_fx", 0)),
             fees_fx=D(row.get("fees_fx", 0)),
-            currency=row.get("currency", "USD") or "USD",
+            currency=_choice(row.get("currency"), _CURRENCIES, "USD"),
         ))
     return out
 
@@ -846,6 +858,18 @@ async def quick_compare(request: Request):
 # --------------------------------------------------------------------------
 
 
+def _choice(value: Any, allowed, default: str) -> str:
+    """Keep a form value only if it is one the model actually accepts.
+
+    Everything on these forms arrives as a string, and the fields it feeds are
+    typed as literals. Assigning an unrecognised one used to be stored happily
+    and then blow up on the next read, so anything unexpected is discarded here
+    in favour of the default.
+    """
+    text = (value or "").strip()
+    return text if text in allowed else default
+
+
 def _parse_iso_date(value: str) -> Optional[date]:
     if not value:
         return None
@@ -888,7 +912,9 @@ def _collect_salaries(form) -> List[SalaryIncome]:
             SalaryIncome(
                 employer_name=row.get("employer_name", ""),
                 employer_tan=row.get("employer_tan", "").upper(),
-                employer_category=row.get("employer_category", "OTH") or "OTH",
+                employer_category=_choice(
+                    row.get("employer_category"),
+                    ("GOV", "PSU", "PE", "OTH"), "OTH"),
                 salary_17_1=gross,
                 perquisites_17_2=D(row.get("perquisites_17_2", 0)),
                 profits_in_lieu_17_3=D(row.get("profits_in_lieu_17_3", 0)),
@@ -911,7 +937,8 @@ def _collect_house_properties(form) -> List[HouseProperty]:
             continue
         out.append(
             HouseProperty(
-                property_type=row.get("property_type", "SOP") or "SOP",
+                property_type=_choice(
+                    row.get("property_type"), ("SOP", "LOP", "DLOP"), "SOP"),
                 address=row.get("address", ""),
                 annual_rent_received=rent,
                 municipal_taxes_paid=D(row.get("municipal_taxes_paid", 0)),
@@ -922,7 +949,7 @@ def _collect_house_properties(form) -> List[HouseProperty]:
     return out
 
 
-def _collect_capital_gains(form) -> List[CapitalGainItem]:
+def _collect_capital_gains(form, form_assessment_year: str = CURRENT_AY) -> List[CapitalGainItem]:
     out: List[CapitalGainItem] = []
     for row in _indexed(form, "cg"):
         sale = D(row.get("sale_consideration", 0))
@@ -930,7 +957,9 @@ def _collect_capital_gains(form) -> List[CapitalGainItem]:
             continue
         out.append(
             CapitalGainItem(
-                category=row.get("category", "ltcg_112a") or "ltcg_112a",
+                category=_choice(
+                    row.get("category"),
+                    get_ay(form_assessment_year).capital_gains, "ltcg_112a"),
                 description=row.get("description", ""),
                 sale_date=_parse_iso_date(row.get("sale_date", "")),
                 purchase_date=_parse_iso_date(row.get("purchase_date", "")),
@@ -956,7 +985,10 @@ def _collect_payments(form) -> List[TaxPayment]:
             continue
         out.append(
             TaxPayment(
-                kind=row.get("kind", "tds_other") or "tds_other",
+                kind=_choice(
+                    row.get("kind"),
+                    ("tds_salary", "tds_other", "tcs", "advance_tax",
+                     "self_assessment"), "tds_other"),
                 deductor_name=row.get("deductor_name", ""),
                 deductor_tan=row.get("deductor_tan", "").upper(),
                 amount=amount,

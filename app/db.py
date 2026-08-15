@@ -55,10 +55,36 @@ class ReturnRecord(Base):
     )
 
     def load(self) -> TaxReturn:
+        """Read the stored return, salvaging as much as possible.
+
+        A single unreadable field must never cost the user everything else they
+        entered. Dropping straight to an empty return — which is what this used
+        to do — looks exactly like the data having vanished.
+        """
         try:
-            return TaxReturn.model_validate(json.loads(self.payload or "{}"))
-        except Exception:  # noqa: BLE001 - a corrupt row must not brick the app
+            raw = json.loads(self.payload or "{}")
+        except json.JSONDecodeError:
             return TaxReturn(assessment_year=self.assessment_year)
+
+        try:
+            return TaxReturn.model_validate(raw)
+        except Exception:  # noqa: BLE001 - salvage rather than discard
+            pass
+
+        salvaged = TaxReturn(assessment_year=self.assessment_year)
+        rejected: list[str] = []
+        for key, value in raw.items():
+            try:
+                setattr(salvaged, key, value)
+            except Exception:  # noqa: BLE001 - this one field is the bad one
+                rejected.append(key)
+        if rejected:
+            salvaged.notes.append(
+                "Some stored values could not be read back and have been reset: "
+                + ", ".join(sorted(rejected))
+                + ". Everything else was kept — check those fields before filing."
+            )
+        return salvaged
 
     def save(self, tax_return: TaxReturn) -> None:
         self.payload = tax_return.model_dump_json()

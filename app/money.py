@@ -15,6 +15,13 @@ PAISE = Decimal("0.01")
 RUPEE = Decimal("1")
 TEN = Decimal("10")
 
+# No individual's return contains a figure this large — India's entire annual
+# output is around 3e14 rupees. Anything beyond it is a typo or a probe, and it
+# is treated as junk rather than allowed through: Decimal.quantize raises once a
+# value needs more than the context's 28 significant digits, and that exception
+# would surface in a template, where it is fatal.
+MAX_MONEY = Decimal("1e15")
+
 
 def D(value: Any) -> Decimal:
     """Coerce anything sane into a Decimal. Junk becomes zero, never an error."""
@@ -41,17 +48,40 @@ def D(value: Any) -> Decimal:
         result = Decimal(text)
     except (InvalidOperation, ValueError):
         return ZERO
-    return -result if negative else result
+    if negative:
+        result = -result
+    return result if _is_sane(result) else ZERO
+
+
+def _is_sane(amount: Decimal) -> bool:
+    """Reject anything that cannot be a rupee figure."""
+    if not amount.is_finite():        # NaN, Infinity, sNaN
+        return False
+    return -MAX_MONEY <= amount <= MAX_MONEY
 
 
 def paise(value: Any) -> Decimal:
     """Round to 2 decimals — used for intermediate working, not for reporting."""
-    return D(value).quantize(PAISE, rounding=ROUND_HALF_UP)
+    return _quantize(D(value), PAISE)
 
 
 def rupees(value: Any) -> Decimal:
     """Round to the nearest rupee (section 288A/288B rounding for reporting)."""
-    return D(value).quantize(RUPEE, rounding=ROUND_HALF_UP)
+    return _quantize(D(value), RUPEE)
+
+
+def _quantize(amount: Decimal, exponent: Decimal) -> Decimal:
+    """Quantize without ever raising.
+
+    ``D`` already screens out the values that cannot be quantized, but a figure
+    computed from several sane ones can still overflow. These helpers are called
+    from Jinja templates, where an exception means a 500 rather than a wrong
+    number, so they degrade instead of throwing.
+    """
+    try:
+        return amount.quantize(exponent, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return ZERO
 
 
 def round_to_ten(value: Any) -> Decimal:
@@ -59,7 +89,7 @@ def round_to_ten(value: Any) -> Decimal:
     amount = D(value)
     sign = -1 if amount < 0 else 1
     amount = abs(amount)
-    return sign * (amount / TEN).quantize(RUPEE, rounding=ROUND_HALF_UP) * TEN
+    return sign * _quantize(amount / TEN, RUPEE) * TEN
 
 
 def non_negative(value: Any) -> Decimal:
@@ -72,7 +102,7 @@ def inr(value: Any) -> str:
     """Format in the Indian grouping system: 12,34,567."""
     amount = rupees(value)
     negative = amount < ZERO
-    digits = str(abs(amount).quantize(RUPEE, rounding=ROUND_HALF_UP))
+    digits = str(_quantize(abs(amount), RUPEE))
     if len(digits) > 3:
         head, tail = digits[:-3], digits[-3:]
         groups = []

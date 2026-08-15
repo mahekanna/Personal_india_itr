@@ -395,8 +395,14 @@ threshold, the capital-gains buckets, loss set-off ordering, the Chapter VI-A
 ceilings and the interest sections.
 
 ```bash
-pytest tests/ -q          # 234 tests
+pytest tests/ -q          # 267 tests
 ```
+
+A further 33 tests cover robustness rather than arithmetic: what happens when a
+field holds `1e999`, when an assessment year is one the engine has never heard
+of, when every date is missing, when the upload is not really a PDF. Each was
+found by probing the running application, and each was a real failure before the
+fix it names.
 
 Two invariants worth knowing about, because they are easy to get wrong:
 
@@ -423,6 +429,10 @@ Two invariants worth knowing about, because they are easy to get wrong:
   1099-B is right about US tax and wrong about this one.
 - **A dividend is sized by the record date.** Not the pay date, and not the
   position held today.
+- **Bad input must never cost the user their data.** A single unreadable field
+  used to discard the whole return on the next read, which looks exactly like
+  the data having vanished. The loader now salvages every field it can and says
+  which ones it could not.
 - **A dated dividend earns the section 234C relief; an undated one cannot.**
   Where no date is known the earliest instalment is assumed, which errs against
   the taxpayer rather than understating the liability.
@@ -489,7 +499,7 @@ app/
   merge.py            Applying reviewed extractions, with de-duplication
   report.py           The computation-sheet PDF
   main.py             Routes
-tests/                234 tests
+tests/                267 tests
 ```
 
 Adding an assessment year is a data edit in `tax/rules.py`, not a code change —
