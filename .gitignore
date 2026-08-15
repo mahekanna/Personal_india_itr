@@ -26,6 +26,11 @@ venv/
 .coverage
 htmlcov/
 
+# Demo artefacts: the JPEGs are committed for the README, the full-size PNGs
+# and the generated JSON/PDF are not.
+demo/screens/*.png
+demo/output/
+
 # Editors and OS
 .vscode/
 .idea/

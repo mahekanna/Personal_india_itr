@@ -286,6 +286,29 @@ portal field.
 
 ---
 
+## Seeing it with data in it
+
+```bash
+python demo/seed_demo.py          # one fictional taxpayer, two scenarios
+python run.py
+```
+
+That creates two returns for AY 2026-27 belonging to an invented Bengaluru
+engineer with a US employer's equity — a four-year grant vesting quarterly, an
+ESPP purchase with a lookback, dividends part-reinvested, a couple of sales, an
+Indian dividend, a home loan and the usual deductions. One is the finished
+return; the other is the same year still in progress, seen from December, where
+salary TDS covers the salary and the gains fall to advance tax. Nothing in it is
+real: no genuine PAN, TAN, IFSC or account number appears anywhere.
+
+`demo/capture.py` drives the running application with a real browser and writes
+a screenshot of each screen to `demo/screens/`, which is how the images in this
+file were made and a quick way to eyeball the interface after a change.
+
+![Regime comparison](demo/screens/06-compare.jpg)
+
+![Advance tax planner](demo/screens/07-planner.jpg)
+
 ## Installing and running
 
 Python 3.10 or newer.
