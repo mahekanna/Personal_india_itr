@@ -1,0 +1,563 @@
+{
+ "_comment": [
+  "PROVISIONAL REFERENCE RATES \u2014 NOT AN AUTHORITY.",
+  "Rule 115 requires the SBI telegraphic transfer buying rate as on the last",
+  "day of the month immediately preceding the month of the transaction. Every",
+  "rate here is a starting point so the application can compute something",
+  "straight away; each is flagged provisional and the interface tells you which",
+  "months you actually relied on. Replace them with the published SBI figures",
+  "before you file, either by editing this file or by entering the rate on the",
+  "Foreign income page, which always wins over anything here.",
+  "The key it is filed under is the month the rate is QUOTED for, so a vest in",
+  "September 2025 reads the 2025-08 entry."
+ ],
+ "currency_note": "EUR and GBP are cross-rates off USD and are cruder still.",
+ "rates": {
+  "2023-01": {
+   "USD": {
+    "value": 81.3,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 87.804,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 102.438,
+    "provisional": true
+   }
+  },
+  "2023-02": {
+   "USD": {
+    "value": 82.6,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.208,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.076,
+    "provisional": true
+   }
+  },
+  "2023-03": {
+   "USD": {
+    "value": 82.2,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 88.776,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 103.572,
+    "provisional": true
+   }
+  },
+  "2023-04": {
+   "USD": {
+    "value": 81.8,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 88.344,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 103.068,
+    "provisional": true
+   }
+  },
+  "2023-05": {
+   "USD": {
+    "value": 82.7,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.316,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.202,
+    "provisional": true
+   }
+  },
+  "2023-06": {
+   "USD": {
+    "value": 82.0,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 88.56,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 103.32,
+    "provisional": true
+   }
+  },
+  "2023-07": {
+   "USD": {
+    "value": 82.2,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 88.776,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 103.572,
+    "provisional": true
+   }
+  },
+  "2023-08": {
+   "USD": {
+    "value": 82.7,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.316,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.202,
+    "provisional": true
+   }
+  },
+  "2023-09": {
+   "USD": {
+    "value": 83.05,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.694,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.643,
+    "provisional": true
+   }
+  },
+  "2023-10": {
+   "USD": {
+    "value": 83.25,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.91,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.895,
+    "provisional": true
+   }
+  },
+  "2023-11": {
+   "USD": {
+    "value": 83.35,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 90.018,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 105.021,
+    "provisional": true
+   }
+  },
+  "2023-12": {
+   "USD": {
+    "value": 83.2,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.856,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.832,
+    "provisional": true
+   }
+  },
+  "2024-01": {
+   "USD": {
+    "value": 83.1,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.748,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.706,
+    "provisional": true
+   }
+  },
+  "2024-02": {
+   "USD": {
+    "value": 82.9,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.532,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.454,
+    "provisional": true
+   }
+  },
+  "2024-03": {
+   "USD": {
+    "value": 83.4,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 90.072,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 105.084,
+    "provisional": true
+   }
+  },
+  "2024-04": {
+   "USD": {
+    "value": 83.45,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 90.126,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 105.147,
+    "provisional": true
+   }
+  },
+  "2024-05": {
+   "USD": {
+    "value": 83.3,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 89.964,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 104.958,
+    "provisional": true
+   }
+  },
+  "2024-06": {
+   "USD": {
+    "value": 83.45,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 90.126,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 105.147,
+    "provisional": true
+   }
+  },
+  "2024-07": {
+   "USD": {
+    "value": 83.7,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 90.396,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 105.462,
+    "provisional": true
+   }
+  },
+  "2024-08": {
+   "USD": {
+    "value": 83.85,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 90.558,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 105.651,
+    "provisional": true
+   }
+  },
+  "2024-09": {
+   "USD": {
+    "value": 83.75,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 90.45,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 105.525,
+    "provisional": true
+   }
+  },
+  "2024-10": {
+   "USD": {
+    "value": 84.1,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 90.828,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 105.966,
+    "provisional": true
+   }
+  },
+  "2024-11": {
+   "USD": {
+    "value": 84.5,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 91.26,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 106.47,
+    "provisional": true
+   }
+  },
+  "2024-12": {
+   "USD": {
+    "value": 85.6,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 92.448,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 107.856,
+    "provisional": true
+   }
+  },
+  "2025-01": {
+   "USD": {
+    "value": 86.6,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 93.528,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 109.116,
+    "provisional": true
+   }
+  },
+  "2025-02": {
+   "USD": {
+    "value": 87.3,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 94.284,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 109.998,
+    "provisional": true
+   }
+  },
+  "2025-03": {
+   "USD": {
+    "value": 85.6,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 92.448,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 107.856,
+    "provisional": true
+   }
+  },
+  "2025-04": {
+   "USD": {
+    "value": 85.1,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 91.908,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 107.226,
+    "provisional": true
+   }
+  },
+  "2025-05": {
+   "USD": {
+    "value": 85.4,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 92.232,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 107.604,
+    "provisional": true
+   }
+  },
+  "2025-06": {
+   "USD": {
+    "value": 85.75,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 92.61,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 108.045,
+    "provisional": true
+   }
+  },
+  "2025-07": {
+   "USD": {
+    "value": 87.55,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 94.554,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 110.313,
+    "provisional": true
+   }
+  },
+  "2025-08": {
+   "USD": {
+    "value": 88.15,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 95.202,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 111.069,
+    "provisional": true
+   }
+  },
+  "2025-09": {
+   "USD": {
+    "value": 88.75,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 95.85,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 111.825,
+    "provisional": true
+   }
+  },
+  "2025-10": {
+   "USD": {
+    "value": 88.65,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 95.742,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 111.699,
+    "provisional": true
+   }
+  },
+  "2025-11": {
+   "USD": {
+    "value": 89.4,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 96.552,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 112.644,
+    "provisional": true
+   }
+  },
+  "2025-12": {
+   "USD": {
+    "value": 89.9,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 97.092,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 113.274,
+    "provisional": true
+   }
+  },
+  "2026-01": {
+   "USD": {
+    "value": 90.1,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 97.308,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 113.526,
+    "provisional": true
+   }
+  },
+  "2026-02": {
+   "USD": {
+    "value": 89.75,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 96.93,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 113.085,
+    "provisional": true
+   }
+  },
+  "2026-03": {
+   "USD": {
+    "value": 89.5,
+    "provisional": true
+   },
+   "EUR": {
+    "value": 96.66,
+    "provisional": true
+   },
+   "GBP": {
+    "value": 112.77,
+    "provisional": true
+   }
+  }
+ }
+}

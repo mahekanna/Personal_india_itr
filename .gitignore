@@ -4,7 +4,8 @@
 *.sqlite3
 .india-itr/
 uploads/
-data/
+# User data directories only — app/data holds the shipped rate table.
+/data/
 
 # Real tax documents, if anyone drops them in the tree by accident.
 Form16*.pdf
