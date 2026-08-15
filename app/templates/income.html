@@ -1,0 +1,576 @@
+{% extends "base.html" %}
+{% block title %}Income and deductions · Personal India ITR{% endblock %}
+{% block content %}
+
+<h1>Income, deductions and taxes paid</h1>
+<p class="lede">
+  Everything read from your documents is filled in below. Correct anything that
+  looks wrong and add what the documents did not cover.
+</p>
+
+{% if tr.notes %}
+<section class="card">
+  <div class="card-head"><h2>Notes from the documents</h2></div>
+  {% for note in tr.notes %}
+  <div class="note note-warning">{{ note }}</div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<form method="post" action="/returns/{{ record.id }}/income">
+
+<!-- ------------------------------------------------------------------ -->
+<section class="card">
+  <div class="card-head"><h2>Who is filing</h2></div>
+  <div class="grid grid-3">
+    <div class="field">
+      <label for="name">Full name</label>
+      <input type="text" id="name" name="name" value="{{ tr.taxpayer.name }}">
+    </div>
+    <div class="field">
+      <label for="pan">PAN</label>
+      <input type="text" id="pan" name="pan" maxlength="10"
+             style="text-transform:uppercase" value="{{ tr.taxpayer.pan }}">
+    </div>
+    <div class="field">
+      <label for="date_of_birth">Date of birth</label>
+      <input type="date" id="date_of_birth" name="date_of_birth"
+             value="{{ tr.taxpayer.date_of_birth or '' }}">
+    </div>
+    <div class="field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" value="{{ tr.taxpayer.email }}">
+    </div>
+    <div class="field">
+      <label for="mobile">Mobile</label>
+      <input type="text" id="mobile" name="mobile" value="{{ tr.taxpayer.mobile }}">
+    </div>
+    <div class="field">
+      <label for="residential_status">Residential status</label>
+      <select id="residential_status" name="residential_status">
+        <option value="RES" {% if tr.taxpayer.residential_status == 'RES' %}selected{% endif %}>Resident and ordinarily resident</option>
+        <option value="RNOR" {% if tr.taxpayer.residential_status == 'RNOR' %}selected{% endif %}>Resident but not ordinarily resident</option>
+        <option value="NRI" {% if tr.taxpayer.residential_status == 'NRI' %}selected{% endif %}>Non-resident</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="address_line">Address</label>
+      <input type="text" id="address_line" name="address_line" value="{{ tr.taxpayer.address_line }}">
+    </div>
+    <div class="field">
+      <label for="city">City</label>
+      <input type="text" id="city" name="city" value="{{ tr.taxpayer.city }}">
+    </div>
+    <div class="field">
+      <label for="pincode">PIN code</label>
+      <input type="text" id="pincode" name="pincode" value="{{ tr.taxpayer.pincode }}">
+    </div>
+  </div>
+
+  <h3>Refund bank account</h3>
+  {% set account = tr.taxpayer.bank_accounts[0] if tr.taxpayer.bank_accounts else None %}
+  <div class="grid grid-3">
+    <div class="field">
+      <label for="bank_name">Bank</label>
+      <input type="text" id="bank_name" name="bank_name" value="{{ account.bank_name if account else '' }}">
+    </div>
+    <div class="field">
+      <label for="bank_ifsc">IFSC</label>
+      <input type="text" id="bank_ifsc" name="bank_ifsc" style="text-transform:uppercase"
+             value="{{ account.ifsc if account else '' }}">
+    </div>
+    <div class="field">
+      <label for="bank_account">Account number</label>
+      <input type="text" id="bank_account" name="bank_account" value="{{ account.account_number if account else '' }}">
+    </div>
+  </div>
+
+  <h3>Circumstances that decide the ITR form</h3>
+  <div class="grid grid-3">
+    <div class="field-inline">
+      <input type="checkbox" id="has_foreign_assets" name="has_foreign_assets"
+             {% if tr.taxpayer.has_foreign_assets %}checked{% endif %}>
+      <label for="has_foreign_assets">I hold foreign assets or have foreign income</label>
+    </div>
+    <div class="field-inline">
+      <input type="checkbox" id="is_company_director" name="is_company_director"
+             {% if tr.taxpayer.is_company_director %}checked{% endif %}>
+      <label for="is_company_director">I am a director of a company</label>
+    </div>
+    <div class="field-inline">
+      <input type="checkbox" id="holds_unlisted_equity" name="holds_unlisted_equity"
+             {% if tr.taxpayer.holds_unlisted_equity %}checked{% endif %}>
+      <label for="holds_unlisted_equity">I hold unlisted equity shares</label>
+    </div>
+  </div>
+
+  <div class="grid grid-3" style="margin-top:.6rem">
+    <div class="field">
+      <label for="assessment_year">Assessment year</label>
+      <select id="assessment_year" name="assessment_year">
+        {% for ay in assessment_years %}
+        <option value="{{ ay }}" {% if ay == tr.assessment_year %}selected{% endif %}>AY {{ ay }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="filing_date">Date you expect to file</label>
+      <input type="date" id="filing_date" name="filing_date"
+             value="{{ tr.filing_date or today }}">
+    </div>
+    <div class="field">
+      <label for="regime_choice">Regime</label>
+      <select id="regime_choice" name="regime_choice">
+        <option value="auto" {% if tr.regime_choice == 'auto' %}selected{% endif %}>Pick whichever is cheaper</option>
+        <option value="new" {% if tr.regime_choice == 'new' %}selected{% endif %}>New regime</option>
+        <option value="old" {% if tr.regime_choice == 'old' %}selected{% endif %}>Old regime</option>
+      </select>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<section class="card">
+  <div class="card-head">
+    <h2>Salary</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="salary">
+      + Add an employer
+    </button>
+  </div>
+  <p class="hint">One block per employer. A mid-year job change means two.</p>
+
+  <div data-repeat="salary">
+    {% for salary in tr.salaries %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Employer <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-3">
+        <div class="field"><label>Employer name</label>
+          <input type="text" name="salary_{{ loop.index0 }}_employer_name" value="{{ salary.employer_name }}"></div>
+        <div class="field"><label>TAN</label>
+          <input type="text" name="salary_{{ loop.index0 }}_employer_tan" value="{{ salary.employer_tan }}"></div>
+        <div class="field"><label>Employer category</label>
+          <select name="salary_{{ loop.index0 }}_employer_category">
+            {% for code, text in [('OTH','Other'),('PE','Private sector'),('PSU','Public sector'),('GOV','Government')] %}
+            <option value="{{ code }}" {% if salary.employer_category == code %}selected{% endif %}>{{ text }}</option>
+            {% endfor %}
+          </select></div>
+        <div class="field"><label>Salary u/s 17(1)</label>
+          <input type="number" step="1" name="salary_{{ loop.index0 }}_salary_17_1" value="{{ salary.salary_17_1 }}"></div>
+        <div class="field"><label>Perquisites u/s 17(2)</label>
+          <input type="number" step="1" name="salary_{{ loop.index0 }}_perquisites_17_2" value="{{ salary.perquisites_17_2 }}"></div>
+        <div class="field"><label>Profits in lieu u/s 17(3)</label>
+          <input type="number" step="1" name="salary_{{ loop.index0 }}_profits_in_lieu_17_3" value="{{ salary.profits_in_lieu_17_3 }}"></div>
+        <div class="field"><label>HRA exempt u/s 10(13A)</label>
+          <input type="number" step="1" name="salary_{{ loop.index0 }}_hra" value="{{ salary.exempt_allowances.get('hra', 0) }}"></div>
+        <div class="field"><label>LTA exempt u/s 10(5)</label>
+          <input type="number" step="1" name="salary_{{ loop.index0 }}_lta" value="{{ salary.exempt_allowances.get('lta', 0) }}"></div>
+        <div class="field"><label>Other section 10 exemptions</label>
+          <input type="number" step="1" name="salary_{{ loop.index0 }}_other_exempt"
+                 value="{{ salary.total_exempt - salary.exempt_allowances.get('hra', 0) - salary.exempt_allowances.get('lta', 0) }}"></div>
+        <div class="field"><label>Professional tax</label>
+          <input type="number" step="1" name="salary_{{ loop.index0 }}_professional_tax" value="{{ salary.professional_tax }}"></div>
+        <div class="field"><label>Employer's NPS contribution — 80CCD(2)</label>
+          <input type="number" step="1" name="salary_{{ loop.index0 }}_employer_nps" value="{{ salary.employer_nps_contribution }}"></div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Employer <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-3">
+          <div class="field"><label>Employer name</label>
+            <input type="text" name="salary___INDEX___employer_name"></div>
+          <div class="field"><label>TAN</label>
+            <input type="text" name="salary___INDEX___employer_tan"></div>
+          <div class="field"><label>Employer category</label>
+            <select name="salary___INDEX___employer_category">
+              <option value="OTH">Other</option><option value="PE">Private sector</option>
+              <option value="PSU">Public sector</option><option value="GOV">Government</option>
+            </select></div>
+          <div class="field"><label>Salary u/s 17(1)</label>
+            <input type="number" step="1" name="salary___INDEX___salary_17_1" value="0"></div>
+          <div class="field"><label>Perquisites u/s 17(2)</label>
+            <input type="number" step="1" name="salary___INDEX___perquisites_17_2" value="0"></div>
+          <div class="field"><label>Profits in lieu u/s 17(3)</label>
+            <input type="number" step="1" name="salary___INDEX___profits_in_lieu_17_3" value="0"></div>
+          <div class="field"><label>HRA exempt u/s 10(13A)</label>
+            <input type="number" step="1" name="salary___INDEX___hra" value="0"></div>
+          <div class="field"><label>LTA exempt u/s 10(5)</label>
+            <input type="number" step="1" name="salary___INDEX___lta" value="0"></div>
+          <div class="field"><label>Other section 10 exemptions</label>
+            <input type="number" step="1" name="salary___INDEX___other_exempt" value="0"></div>
+          <div class="field"><label>Professional tax</label>
+            <input type="number" step="1" name="salary___INDEX___professional_tax" value="0"></div>
+          <div class="field"><label>Employer's NPS contribution — 80CCD(2)</label>
+            <input type="number" step="1" name="salary___INDEX___employer_nps" value="0"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<section class="card">
+  <div class="card-head">
+    <h2>House property</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="hp">
+      + Add a property
+    </button>
+  </div>
+  <p class="hint">
+    Interest on a self-occupied house is deductible only under the old regime,
+    and only up to ₹2,00,000.
+  </p>
+
+  <div data-repeat="hp">
+    {% for prop in tr.house_properties %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Property <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-3">
+        <div class="field"><label>Type</label>
+          <select name="hp_{{ loop.index0 }}_property_type">
+            <option value="SOP" {% if prop.property_type == 'SOP' %}selected{% endif %}>Self-occupied</option>
+            <option value="LOP" {% if prop.property_type == 'LOP' %}selected{% endif %}>Let out</option>
+            <option value="DLOP" {% if prop.property_type == 'DLOP' %}selected{% endif %}>Deemed let out</option>
+          </select></div>
+        <div class="field"><label>Address</label>
+          <input type="text" name="hp_{{ loop.index0 }}_address" value="{{ prop.address }}"></div>
+        <div class="field"><label>Your ownership share (1 = sole)</label>
+          <input type="number" step="0.01" name="hp_{{ loop.index0 }}_ownership_share" value="{{ prop.ownership_share }}"></div>
+        <div class="field"><label>Annual rent received</label>
+          <input type="number" step="1" name="hp_{{ loop.index0 }}_annual_rent_received" value="{{ prop.annual_rent_received }}"></div>
+        <div class="field"><label>Municipal taxes paid</label>
+          <input type="number" step="1" name="hp_{{ loop.index0 }}_municipal_taxes_paid" value="{{ prop.municipal_taxes_paid }}"></div>
+        <div class="field"><label>Interest on borrowed capital u/s 24(b)</label>
+          <input type="number" step="1" name="hp_{{ loop.index0 }}_interest_24b" value="{{ prop.interest_24b }}"></div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Property <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-3">
+          <div class="field"><label>Type</label>
+            <select name="hp___INDEX___property_type">
+              <option value="SOP">Self-occupied</option><option value="LOP">Let out</option>
+              <option value="DLOP">Deemed let out</option>
+            </select></div>
+          <div class="field"><label>Address</label>
+            <input type="text" name="hp___INDEX___address"></div>
+          <div class="field"><label>Your ownership share (1 = sole)</label>
+            <input type="number" step="0.01" name="hp___INDEX___ownership_share" value="1"></div>
+          <div class="field"><label>Annual rent received</label>
+            <input type="number" step="1" name="hp___INDEX___annual_rent_received" value="0"></div>
+          <div class="field"><label>Municipal taxes paid</label>
+            <input type="number" step="1" name="hp___INDEX___municipal_taxes_paid" value="0"></div>
+          <div class="field"><label>Interest on borrowed capital u/s 24(b)</label>
+            <input type="number" step="1" name="hp___INDEX___interest_24b" value="0"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<section class="card">
+  <div class="card-head">
+    <h2>Capital gains</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="cg">
+      + Add a transaction
+    </button>
+  </div>
+  <p class="hint">
+    {{ tr.capital_gains | length }} transaction(s) imported. For equity bought
+    before 1 February 2018, fill in the fair market value on 31 January 2018 —
+    it usually reduces the gain considerably.
+  </p>
+
+  <div data-repeat="cg">
+    {% for item in tr.capital_gains %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Transaction <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Description</label>
+          <input type="text" name="cg_{{ loop.index0 }}_description" value="{{ item.description }}"></div>
+        <div class="field"><label>Category</label>
+          <select name="cg_{{ loop.index0 }}_category">
+            {% for code, text in [
+              ('ltcg_112a','LTCG equity — s.112A @12.5%'),
+              ('stcg_111a','STCG equity — s.111A @20%'),
+              ('ltcg_112_property','LTCG land/building — s.112'),
+              ('ltcg_112_other','LTCG other assets — s.112'),
+              ('stcg_slab','STCG other assets — slab rate'),
+              ('stcg_debt_mf','Specified mutual fund — s.50AA')] %}
+            <option value="{{ code }}" {% if item.category == code %}selected{% endif %}>{{ text }}</option>
+            {% endfor %}
+          </select></div>
+        <div class="field"><label>Purchase date</label>
+          <input type="date" name="cg_{{ loop.index0 }}_purchase_date" value="{{ item.purchase_date or '' }}"></div>
+        <div class="field"><label>Sale date</label>
+          <input type="date" name="cg_{{ loop.index0 }}_sale_date" value="{{ item.sale_date or '' }}"></div>
+        <div class="field"><label>Sale consideration</label>
+          <input type="number" step="1" name="cg_{{ loop.index0 }}_sale_consideration" value="{{ item.sale_consideration }}"></div>
+        <div class="field"><label>Cost of acquisition</label>
+          <input type="number" step="1" name="cg_{{ loop.index0 }}_cost_of_acquisition" value="{{ item.cost_of_acquisition }}"></div>
+        <div class="field"><label>Transfer expenses</label>
+          <input type="number" step="1" name="cg_{{ loop.index0 }}_transfer_expenses" value="{{ item.transfer_expenses }}"></div>
+        <div class="field"><label>FMV on 31 Jan 2018</label>
+          <input type="number" step="1" name="cg_{{ loop.index0 }}_fmv_31jan2018" value="{{ item.fmv_31jan2018 or '' }}"></div>
+        <div class="field"><label>Indexed cost (property before 23 Jul 2024)</label>
+          <input type="number" step="1" name="cg_{{ loop.index0 }}_indexed_cost" value="{{ item.indexed_cost_of_acquisition or '' }}"></div>
+        <div class="field"><label>Exemption claimed (s.54/54F/54EC)</label>
+          <input type="number" step="1" name="cg_{{ loop.index0 }}_exemption_amount" value="{{ item.exemption_amount }}"></div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Transaction <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Description</label>
+            <input type="text" name="cg___INDEX___description"></div>
+          <div class="field"><label>Category</label>
+            <select name="cg___INDEX___category">
+              <option value="ltcg_112a">LTCG equity — s.112A @12.5%</option>
+              <option value="stcg_111a">STCG equity — s.111A @20%</option>
+              <option value="ltcg_112_property">LTCG land/building — s.112</option>
+              <option value="ltcg_112_other">LTCG other assets — s.112</option>
+              <option value="stcg_slab">STCG other assets — slab rate</option>
+              <option value="stcg_debt_mf">Specified mutual fund — s.50AA</option>
+            </select></div>
+          <div class="field"><label>Purchase date</label>
+            <input type="date" name="cg___INDEX___purchase_date"></div>
+          <div class="field"><label>Sale date</label>
+            <input type="date" name="cg___INDEX___sale_date"></div>
+          <div class="field"><label>Sale consideration</label>
+            <input type="number" step="1" name="cg___INDEX___sale_consideration" value="0"></div>
+          <div class="field"><label>Cost of acquisition</label>
+            <input type="number" step="1" name="cg___INDEX___cost_of_acquisition" value="0"></div>
+          <div class="field"><label>Transfer expenses</label>
+            <input type="number" step="1" name="cg___INDEX___transfer_expenses" value="0"></div>
+          <div class="field"><label>FMV on 31 Jan 2018</label>
+            <input type="number" step="1" name="cg___INDEX___fmv_31jan2018"></div>
+          <div class="field"><label>Indexed cost (property before 23 Jul 2024)</label>
+            <input type="number" step="1" name="cg___INDEX___indexed_cost"></div>
+          <div class="field"><label>Exemption claimed (s.54/54F/54EC)</label>
+            <input type="number" step="1" name="cg___INDEX___exemption_amount" value="0"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<section class="card">
+  <div class="card-head"><h2>Other sources</h2></div>
+  <div class="grid grid-3">
+    {% for name, label in [
+      ('savings_bank_interest','Interest from savings accounts'),
+      ('fixed_deposit_interest','Interest from fixed and recurring deposits'),
+      ('other_interest','Other interest (bonds, EPF, P2P)'),
+      ('income_tax_refund_interest','Interest on an income-tax refund'),
+      ('dividend_income','Dividend income'),
+      ('family_pension','Family pension received'),
+      ('winnings_115bb','Winnings from lotteries and games (flat 30%)'),
+      ('gifts_taxable','Taxable gifts u/s 56(2)(x)'),
+      ('other_income','Any other income')] %}
+    <div class="field">
+      <label for="os_{{ name }}">{{ label }}</label>
+      <input type="number" step="1" id="os_{{ name }}" name="os_{{ name }}"
+             value="{{ tr.other_sources[name] }}">
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<section class="card">
+  <div class="card-head"><h2>Deductions — Chapter VI-A</h2></div>
+  <p class="hint">
+    Enter what you actually invested or paid. Statutory ceilings are applied
+    automatically, and anything the new regime disallows is shown separately in
+    the comparison rather than silently dropped.
+  </p>
+  <div class="grid grid-3">
+    {% for name, label in [
+      ('s80c','80C — LIC, PF, ELSS, tuition, principal repayment'),
+      ('s80ccd1b','80CCD(1B) — additional NPS, up to ₹50,000'),
+      ('s80ccd2',"80CCD(2) — employer's NPS contribution"),
+      ('s80d_self','80D — health insurance for yourself and family'),
+      ('s80d_parents','80D — health insurance for parents'),
+      ('s80d_preventive','80D — preventive health check-up'),
+      ('s80dd','80DD — dependant with a disability'),
+      ('s80ddb','80DDB — treatment of a specified disease'),
+      ('s80e','80E — interest on an education loan'),
+      ('s80eeb','80EEB — interest on an electric-vehicle loan'),
+      ('s80g_100pct_no_limit','80G — donations, 100% with no ceiling'),
+      ('s80g_50pct_no_limit','80G — donations, 50% with no ceiling'),
+      ('s80g_100pct_with_limit','80G — donations, 100% within the ceiling'),
+      ('s80g_50pct_with_limit','80G — donations, 50% within the ceiling'),
+      ('s80ggc','80GGC — contribution to a political party'),
+      ('s80tta','80TTA — savings interest (under 60)'),
+      ('s80ttb','80TTB — deposit interest (60 and above)'),
+      ('s80u','80U — you have a disability'),
+      ('rent_paid_annual','Rent paid in the year (for 80GG, if you get no HRA)')] %}
+    <div class="field">
+      <label for="ded_{{ name }}">{{ label }}</label>
+      <input type="number" step="1" id="ded_{{ name }}" name="ded_{{ name }}"
+             value="{{ tr.deductions[name] }}">
+    </div>
+    {% endfor %}
+  </div>
+  <div class="grid grid-3">
+    <div class="field-inline">
+      <input type="checkbox" id="ded_s80dd_severe" name="ded_s80dd_severe"
+             {% if tr.deductions.s80dd_severe %}checked{% endif %}>
+      <label for="ded_s80dd_severe">The 80DD disability is severe (80% or more)</label>
+    </div>
+    <div class="field-inline">
+      <input type="checkbox" id="ded_s80u_severe" name="ded_s80u_severe"
+             {% if tr.deductions.s80u_severe %}checked{% endif %}>
+      <label for="ded_s80u_severe">My own disability is severe (80% or more)</label>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<section class="card">
+  <div class="card-head">
+    <h2>Taxes already paid</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="tax">
+      + Add an entry
+    </button>
+  </div>
+  <p class="hint">
+    TDS entries should match Form 26AS exactly. For advance tax and
+    self-assessment tax, the BSR code, challan serial number and date go on the
+    return.
+  </p>
+
+  <div data-repeat="tax">
+    {% for payment in tr.taxes_paid.payments %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Entry <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Kind</label>
+          <select name="tax_{{ loop.index0 }}_kind">
+            {% for code, text in [
+              ('tds_salary','TDS on salary'),('tds_other','TDS on other income'),
+              ('tcs','TCS'),('advance_tax','Advance tax'),
+              ('self_assessment','Self-assessment tax')] %}
+            <option value="{{ code }}" {% if payment.kind == code %}selected{% endif %}>{{ text }}</option>
+            {% endfor %}
+          </select></div>
+        <div class="field"><label>Deductor / bank</label>
+          <input type="text" name="tax_{{ loop.index0 }}_deductor_name" value="{{ payment.deductor_name }}"></div>
+        <div class="field"><label>TAN</label>
+          <input type="text" name="tax_{{ loop.index0 }}_deductor_tan" value="{{ payment.deductor_tan }}"></div>
+        <div class="field"><label>Amount</label>
+          <input type="number" step="1" name="tax_{{ loop.index0 }}_amount" value="{{ payment.amount }}"></div>
+        <div class="field"><label>Date paid</label>
+          <input type="date" name="tax_{{ loop.index0 }}_payment_date" value="{{ payment.payment_date or '' }}"></div>
+        <div class="field"><label>BSR code</label>
+          <input type="text" name="tax_{{ loop.index0 }}_bsr_code" value="{{ payment.bsr_code }}"></div>
+        <div class="field"><label>Challan serial number</label>
+          <input type="text" name="tax_{{ loop.index0 }}_challan_serial" value="{{ payment.challan_serial }}"></div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Entry <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Kind</label>
+            <select name="tax___INDEX___kind">
+              <option value="tds_salary">TDS on salary</option>
+              <option value="tds_other">TDS on other income</option>
+              <option value="tcs">TCS</option>
+              <option value="advance_tax">Advance tax</option>
+              <option value="self_assessment">Self-assessment tax</option>
+            </select></div>
+          <div class="field"><label>Deductor / bank</label>
+            <input type="text" name="tax___INDEX___deductor_name"></div>
+          <div class="field"><label>TAN</label>
+            <input type="text" name="tax___INDEX___deductor_tan"></div>
+          <div class="field"><label>Amount</label>
+            <input type="number" step="1" name="tax___INDEX___amount" value="0"></div>
+          <div class="field"><label>Date paid</label>
+            <input type="date" name="tax___INDEX___payment_date"></div>
+          <div class="field"><label>BSR code</label>
+            <input type="text" name="tax___INDEX___bsr_code"></div>
+          <div class="field"><label>Challan serial number</label>
+            <input type="text" name="tax___INDEX___challan_serial"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<section class="card">
+  <div class="card-head"><h2>Presumptive business income</h2></div>
+  <p class="hint">
+    Only for section 44AD, 44ADA or 44AE. Declaring this moves the return to
+    ITR-4, which this system computes but does not yet generate JSON for.
+  </p>
+  <div class="grid grid-4">
+    <div class="field">
+      <label for="business_scheme">Scheme</label>
+      <select id="business_scheme" name="business_scheme">
+        {% for code, text in [('none','None'),('44AD','44AD — business'),
+                              ('44ADA','44ADA — profession'),('44AE','44AE — goods carriage')] %}
+        <option value="{{ code }}" {% if tr.business.scheme == code %}selected{% endif %}>{{ text }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field"><label>44AD turnover received digitally (6%)</label>
+      <input type="number" step="1" name="turnover_digital" value="{{ tr.business.gross_turnover_digital }}"></div>
+    <div class="field"><label>44AD turnover received in cash (8%)</label>
+      <input type="number" step="1" name="turnover_cash" value="{{ tr.business.gross_turnover_cash }}"></div>
+    <div class="field"><label>44ADA gross receipts (50%)</label>
+      <input type="number" step="1" name="receipts_44ada" value="{{ tr.business.gross_receipts_44ada }}"></div>
+  </div>
+  <div class="field-inline" style="margin-top:.5rem">
+    <input type="checkbox" id="has_business_income" name="has_business_income"
+           {% if tr.has_business_income %}checked{% endif %}>
+    <label for="has_business_income">
+      I have business income with regular books of account (ITR-3)
+    </label>
+  </div>
+</section>
+
+<div class="actions">
+  <button class="btn" type="submit">Save and compare the regimes →</button>
+  <a class="btn btn-quiet" href="/returns/{{ record.id }}/documents">Back to documents</a>
+</div>
+
+</form>
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Documents · Personal India ITR{% endblock %}
+{% block content %}
+
+<h1>Upload your documents</h1>
+<p class="lede">
+  Drop them all in at once — there is no need to label anything. Each file is
+  identified, read and scored, and you review every extracted figure on the next
+  screen before it touches the return.
+</p>
+
+<form method="post" action="/returns/{{ record.id }}/documents"
+      enctype="multipart/form-data">
+  <section class="card">
+    <div class="dropzone">
+      <input type="file" name="files" multiple
+             accept=".pdf,.json,.csv,.xlsx,.xls,.txt">
+      <p>Drag files here, or use the picker above.</p>
+      <p id="file-summary"></p>
+    </div>
+
+    <div class="grid grid-2" style="margin-top:1rem">
+      <div class="field">
+        <label for="forced_type">If a file is misread, force its type</label>
+        <select id="forced_type" name="forced_type">
+          <option value="">Detect automatically (recommended)</option>
+          <option value="form16">Form 16</option>
+          <option value="form26as">Form 26AS</option>
+          <option value="ais">Annual Information Statement</option>
+          <option value="bank_interest">Bank interest certificate</option>
+        </select>
+      </div>
+      <div style="align-self:end">
+        <button class="btn" type="submit">Read these documents →</button>
+      </div>
+    </div>
+  </section>
+</form>
+
+<div class="grid grid-2">
+  <section class="card">
+    <div class="card-head"><h2>What to gather</h2></div>
+    <table>
+      <tbody>
+        <tr><td><strong>Form 16</strong><div class="doc-meta">One from every
+          employer you had during the year</div></td></tr>
+        <tr><td><strong>Form 26AS</strong><div class="doc-meta">e-filing portal →
+          e-File → Income Tax Returns → View Form 26AS</div></td></tr>
+        <tr><td><strong>AIS</strong><div class="doc-meta">Compliance portal →
+          AIS. Download the <strong>JSON</strong> — it parses far better than
+          the PDF</div></td></tr>
+        <tr><td><strong>Bank interest certificates</strong><div class="doc-meta">
+          From every bank, including the ones you forgot about</div></td></tr>
+        <tr><td><strong>Broker capital-gains statement</strong><div class="doc-meta">
+          Zerodha Console, Groww, Upstox, CAMS or KFintech — the Excel or CSV
+          export, not the PDF</div></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Password-protected files</h2></div>
+    <p class="hint">
+      AIS and 26AS PDFs are encrypted. The password is your PAN in lower case
+      followed by your date of birth as DDMMYYYY — <code>abcde1234f01011990</code>.
+    </p>
+    <p class="hint">
+      Those are tried automatically once your PAN and date of birth are known.
+      If nothing has been read yet, fill them in on the
+      <a href="/returns/{{ record.id }}/income">Income page</a> first, then come
+      back and upload.
+    </p>
+  </section>
+</div>
+
+{% if documents %}
+<section class="card">
+  <div class="card-head">
+    <h2>Uploaded</h2>
+    <a class="btn btn-quiet btn-small"
+       href="/returns/{{ record.id }}/review">Review extractions →</a>
+  </div>
+  {% for document in documents %}
+  <div class="doc-row">
+    <div>
+      <div class="doc-name">{{ document.filename }}</div>
+      <div class="doc-meta">
+        {{ labels.get(document.document_type, document.document_type) }}
+        · uploaded {{ document.uploaded_at.strftime('%d %b, %H:%M') }}
+        {% if document.applied %}· applied to the return{% endif %}
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:.7rem">
+      <span class="conf" title="Detection confidence">
+        <i style="width: {{ (document.confidence | float * 100) | round | int }}%"></i>
+      </span>
+      <form method="post"
+            action="/returns/{{ record.id }}/documents/{{ document.id }}/delete">
+        <button class="btn btn-danger btn-small" type="submit">Remove</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<div class="actions">
+  <a class="btn btn-quiet" href="/returns/{{ record.id }}/income">
+    Skip and enter everything by hand →
+  </a>
+</div>
+
+{% endblock %}

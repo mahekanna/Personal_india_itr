@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Regime comparison · Personal India ITR{% endblock %}
+{% block content %}
+
+<h1>Which regime, and what it costs</h1>
+<p class="lede">
+  Both regimes computed in full on your figures — slabs, the section 87A rebate
+  with marginal relief, surcharge with marginal relief, cess, and interest under
+  sections 234A, 234B and 234C.
+</p>
+
+<!-- ---------------- reconciliation ---------------- -->
+{% if report.findings %}
+<section class="card">
+  <div class="card-head">
+    <h2>Reconciliation</h2>
+    {% if report.errors %}
+    <span class="pill" style="background:var(--danger-soft); color:var(--danger)">
+      {{ report.errors | length }} to fix
+    </span>
+    {% endif %}
+  </div>
+  {% for finding in report.findings %}
+  <div class="note note-{{ finding.severity }}">
+    <strong>{{ finding.title }}</strong>
+    {{ finding.detail }}
+    {% if finding.suggestion %}
+    <div class="note-fix">{{ finding.suggestion }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<!-- ---------------- the two regimes ---------------- -->
+<div class="grid grid-2">
+  {% for comp in [comparison.new, comparison.old] %}
+  {% set is_winner = comp.regime == comparison.recommended %}
+  <section class="regime {% if is_winner %}regime-win{% endif %}">
+    <div class="regime-title">
+      <h2 style="margin:0">{{ comp.regime_name }}</h2>
+      {% if is_winner %}<span class="pill">Recommended</span>{% endif %}
+    </div>
+    <div class="regime-total">₹{{ comp.total_tax_liability | inr }}</div>
+    <p class="hint" style="margin-top:.15rem">
+      Net tax liability · effective rate {{ comp.effective_rate }}%
+    </p>
+
+    <table>
+      <tbody>
+        <tr><td>Gross total income</td><td class="num">{{ comp.gross_total_income | inr }}</td></tr>
+        <tr><td>Deductions allowed</td><td class="num">{{ comp.deductions_total | inr }}</td></tr>
+        <tr><td>Total income</td><td class="num">{{ comp.total_income_rounded | inr }}</td></tr>
+        <tr><td>Tax at slab rates</td><td class="num">{{ comp.tax_on_normal_income | inr }}</td></tr>
+        {% if comp.tax_on_special_income %}
+        <tr><td>Tax at special rates</td><td class="num">{{ comp.tax_on_special_income | inr }}</td></tr>
+        {% endif %}
+        {% if comp.rebate_87a %}
+        <tr><td>Less: rebate u/s 87A</td><td class="num">−{{ comp.rebate_87a | inr }}</td></tr>
+        {% endif %}
+        {% if comp.surcharge or comp.surcharge_marginal_relief %}
+        <tr><td>Surcharge
+          {% if comp.surcharge_marginal_relief %}
+          <div class="doc-meta">after marginal relief of ₹{{ comp.surcharge_marginal_relief | inr }}</div>
+          {% endif %}
+        </td><td class="num">{{ comp.surcharge | inr }}</td></tr>
+        {% endif %}
+        <tr><td>Health and education cess</td><td class="num">{{ comp.cess | inr }}</td></tr>
+        <tr class="row-total"><td>Net tax liability</td>
+            <td class="num">{{ comp.total_tax_liability | inr }}</td></tr>
+        {% if comp.interest.total %}
+        <tr><td>Interest and fee u/s 234A/B/C/F</td>
+            <td class="num">{{ comp.interest.total | inr }}</td></tr>
+        {% endif %}
+        <tr><td>Less: taxes already paid</td>
+            <td class="num">−{{ comp.total_taxes_paid | inr }}</td></tr>
+        <tr class="row-total">
+          <td>{% if comp.net_payable > 0 %}Balance payable{% else %}Refund due{% endif %}</td>
+          <td class="num">
+            {% if comp.net_payable > 0 %}{{ comp.net_payable | inr }}
+            {% else %}{{ comp.refund_due | inr }}{% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    {% if comp.deduction_detail and comp.deduction_detail.disallowed %}
+    <details class="raw">
+      <summary>{{ comp.deduction_detail.disallowed | length }} deduction(s) not available here</summary>
+      <pre>{% for line in comp.deduction_detail.disallowed %}{{ line.section }} — {{ line.label }}: ₹{{ line.claimed }} claimed, nil allowed
+{% endfor %}</pre>
+    </details>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+
+<section class="card" style="margin-top:1rem">
+  <div class="card-head"><h2>The difference</h2></div>
+  <div class="grid grid-3">
+    <div class="stat stat-accent">
+      <div class="stat-label">Cheaper regime</div>
+      <div class="stat-value">{{ comparison.recommended | capitalize }}</div>
+      <div class="stat-note">on the figures entered</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">You save</div>
+      <div class="stat-value">₹{{ comparison.saving | inr }}</div>
+      <div class="stat-note">tax and interest combined</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Deductions forgone in the new regime</div>
+      <div class="stat-value">₹{{ (comparison.old.deductions_total - comparison.new.deductions_total) | inr }}</div>
+      <div class="stat-note">
+        {% if comparison.recommended == 'new' %}
+          and it is still cheaper
+        {% else %}
+          which is why the old regime wins
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if chosen.warnings %}
+  <div style="margin-top:1rem">
+    {% for warning in chosen.warnings %}
+    <div class="note">{{ warning }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if chosen.interest.notes %}
+  <div style="margin-top:.6rem">
+    {% for note in chosen.interest.notes %}
+    <div class="note note-warning">{{ note }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<!-- ---------------- computation detail ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>Line-by-line computation — {{ chosen.regime_name }}</h2>
+  </div>
+  <div class="table-wrap">
+  <table>
+    <tbody>
+      {% for line in chosen.lines %}
+      {% if line.amount != 0 or line.is_subtotal %}
+      <tr {% if line.is_subtotal %}class="row-total"{% endif %}>
+        <td>{{ line.label }}
+          {% if line.note %}<div class="doc-meta">{{ line.note }}</div>{% endif %}
+        </td>
+        <td class="num">{{ line.amount | inr }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+{% if chosen.special_slices %}
+<section class="card">
+  <div class="card-head"><h2>Income taxed at special rates</h2></div>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Bucket</th><th class="num">Income</th><th class="num">Exempt</th>
+          <th class="num">Chargeable</th><th class="num">Rate</th><th class="num">Tax</th></tr>
+    </thead>
+    <tbody>
+      {% for slice in chosen.special_slices %}
+      <tr>
+        <td>{{ slice.label }}</td>
+        <td class="num">{{ slice.income | inr }}</td>
+        <td class="num">{{ (slice.statutory_exemption + slice.basic_exemption_used) | inr }}</td>
+        <td class="num">{{ slice.chargeable | inr }}</td>
+        <td class="num">{{ (slice.rate * 100) }}%</td>
+        <td class="num">{{ slice.tax | inr }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<form method="post" action="/returns/{{ record.id }}/compare">
+  <section class="card">
+    <div class="card-head"><h2>Your choice</h2></div>
+    <div class="field">
+      <label for="regime_choice">Regime to file under</label>
+      <select id="regime_choice" name="regime_choice">
+        <option value="auto" {% if tr.regime_choice == 'auto' %}selected{% endif %}>
+          Whichever is cheaper — currently {{ comparison.recommended }}
+        </option>
+        <option value="new" {% if tr.regime_choice == 'new' %}selected{% endif %}>New regime</option>
+        <option value="old" {% if tr.regime_choice == 'old' %}selected{% endif %}>Old regime</option>
+      </select>
+    </div>
+    <p class="hint">
+      A salaried taxpayer with no business income may switch regimes every year.
+      With business income the old regime can be chosen only once, via Form 10-IEA.
+    </p>
+    <div class="actions">
+      <button class="btn" type="submit">Continue to filing →</button>
+      <a class="btn btn-quiet" href="/returns/{{ record.id }}/income">Edit the figures</a>
+    </div>
+  </section>
+</form>
+
+{% endblock %}

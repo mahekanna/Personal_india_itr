@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}File · Personal India ITR{% endblock %}
+{% block content %}
+
+<h1>Your filing pack</h1>
+<p class="lede">
+  Everything needed to file, in the order you will need it. The JSON is the fast
+  route; the field-by-field pack below works even if the schema has drifted or
+  you would rather type the return in online.
+</p>
+
+{% if report.errors %}
+<section class="card">
+  <div class="card-head"><h2>Fix these before you file</h2></div>
+  {% for finding in report.errors %}
+  <div class="note note-error">
+    <strong>{{ finding.title }}</strong>
+    {{ finding.detail }}
+    {% if finding.suggestion %}<div class="note-fix">{{ finding.suggestion }}</div>{% endif %}
+  </div>
+  {% endfor %}
+  <a class="btn btn-quiet" href="/returns/{{ record.id }}/income">Go back and correct them</a>
+</section>
+{% endif %}
+
+<!-- ---------------- headline ---------------- -->
+<div class="grid grid-4">
+  <div class="stat">
+    <div class="stat-label">Form</div>
+    <div class="stat-value">{{ decision.form }}</div>
+    <div class="stat-note">AY {{ tr.assessment_year }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Regime</div>
+    <div class="stat-value" style="font-size:1.05rem">
+      {{ 'New' if comp.regime == 'new' else 'Old' }}
+    </div>
+    <div class="stat-note">saves ₹{{ comparison.saving | inr }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Total income</div>
+    <div class="stat-value" style="font-size:1.15rem">₹{{ comp.total_income_rounded | inr }}</div>
+    <div class="stat-note">after deductions</div>
+  </div>
+  {% if comp.net_payable > 0 %}
+  <div class="stat stat-danger">
+    <div class="stat-label">Still to pay</div>
+    <div class="stat-value" style="font-size:1.15rem">₹{{ comp.net_payable | inr }}</div>
+    <div class="stat-note">as self-assessment tax</div>
+  </div>
+  {% else %}
+  <div class="stat stat-accent">
+    <div class="stat-label">Refund due</div>
+    <div class="stat-value" style="font-size:1.15rem">₹{{ comp.refund_due | inr }}</div>
+    <div class="stat-note">to your pre-validated account</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ---------------- form selection ---------------- -->
+<section class="card" style="margin-top:1rem">
+  <div class="card-head"><h2>Why {{ decision.form }}</h2></div>
+  {% for reason in decision.reasons %}
+  <div class="note note-info">{{ reason }}</div>
+  {% endfor %}
+  {% if decision.disqualifications %}
+  <h3 style="margin-top:.8rem">What rules out ITR-1</h3>
+  <ul style="font-size:.87rem; color:var(--ink-soft); padding-left:1.1rem">
+    {% for item in decision.disqualifications %}<li>{{ item }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if not decision.supported %}
+  <div class="note note-warning" style="margin-top:.7rem">
+    <strong>JSON generation is not available for {{ decision.form }}</strong>
+    {{ decision.note }}
+  </div>
+  {% endif %}
+</section>
+
+<!-- ---------------- downloads ---------------- -->
+<section class="card">
+  <div class="card-head"><h2>Downloads</h2></div>
+  <div class="actions" style="margin-top:0">
+    {% if decision.supported and not json_error %}
+    <a class="btn" href="/returns/{{ record.id }}/itr.json">
+      Download the {{ decision.form }} JSON
+    </a>
+    {% endif %}
+    <a class="btn btn-quiet" href="/returns/{{ record.id }}/computation.pdf">
+      Computation sheet (PDF)
+    </a>
+    <a class="btn btn-quiet" href="/returns/{{ record.id }}/data.json">
+      Raw return data (backup)
+    </a>
+  </div>
+  {% if json_error %}
+  <div class="note note-error" style="margin-top:.8rem">
+    <strong>The JSON could not be built</strong>{{ json_error }}
+  </div>
+  {% endif %}
+  <div class="note" style="margin-top:.9rem">
+    <strong>Before you trust the JSON, import it once</strong>
+    The department revises the schema every year, sometimes without notice.
+    Open the official offline utility, import this file, and check that it loads
+    without validation errors. If it complains, use the filing pack below and
+    type the figures in — the computation is the same either way.
+  </div>
+</section>
+
+<!-- ---------------- checklist ---------------- -->
+<section class="card">
+  <div class="card-head"><h2>What to do, in order</h2></div>
+  <ol class="checklist">
+    {% for step in pack.checklist %}<li>{{ step }}</li>{% endfor %}
+  </ol>
+</section>
+
+<!-- ---------------- the pack ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>Field-by-field filing pack</h2>
+    <span class="hint" style="margin:0">Every figure, mapped to where it goes on the form</span>
+  </div>
+  {% for section in pack.sections %}
+  <h3 style="margin-top:1.1rem">{{ section.portal_location }}</h3>
+  <div class="table-wrap">
+  <table>
+    <tbody>
+      {% for row in section.rows %}
+      <tr>
+        <td>{{ row.field_label }}
+          {% if row.note %}<div class="doc-meta">{{ row.note }}</div>{% endif %}
+        </td>
+        <td class="num">{{ row.value }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endfor %}
+</section>
+
+{% if report.warnings %}
+<section class="card">
+  <div class="card-head"><h2>Worth a second look</h2></div>
+  {% for finding in report.warnings %}
+  <div class="note note-warning">
+    <strong>{{ finding.title }}</strong>
+    {{ finding.detail }}
+    {% if finding.suggestion %}<div class="note-fix">{{ finding.suggestion }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<div class="actions">
+  <a class="btn btn-quiet" href="/returns/{{ record.id }}/compare">Back to the comparison</a>
+  <a class="btn btn-quiet" href="/">All returns</a>
+</div>
+
+{% endblock %}

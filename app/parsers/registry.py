@@ -1,0 +1,167 @@
+"""Work out what a file is, then hand it to the right parser.
+
+The user should be able to drop the whole folder in at once — Form 16 from two
+employers, the AIS PDF, a 26AS, three bank certificates and a broker export —
+without labelling anything.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+from . import ais, bank, broker, form16, form26as
+from .base import (
+    Extraction,
+    PasswordRequired,
+    candidate_passwords,
+    extract_pdf_tables,
+    extract_pdf_text,
+)
+
+# Ordered by specificity: the first parser whose score clears the bar wins,
+# but we always run every scorer so an ambiguous file can be reported as such.
+_PDF_PARSERS: List[Tuple[str, Callable[[str], float], Callable]] = [
+    (form16.DOC_TYPE, form16.score, form16.parse),
+    (form26as.DOC_TYPE, form26as.score, form26as.parse),
+    (ais.DOC_TYPE, ais.score, ais.parse),
+    (bank.DOC_TYPE, bank.score, bank.parse),
+]
+
+DOCUMENT_LABELS = {
+    "form16": "Form 16 (salary TDS certificate)",
+    "form26as": "Form 26AS (tax credit statement)",
+    "ais": "Annual Information Statement",
+    "bank_interest": "Bank interest certificate",
+    "broker_pnl": "Broker capital-gains statement",
+    "unknown": "Unrecognised document",
+}
+
+_TABULAR_SUFFIXES = (".csv", ".xlsx", ".xls", ".txt")
+
+
+class ParserRegistry:
+    """Kept as a class so callers can register their own parsers later."""
+
+    def __init__(self) -> None:
+        self.pdf_parsers = list(_PDF_PARSERS)
+
+
+def parse_document(
+    raw: bytes,
+    filename: str,
+    *,
+    pan: str = "",
+    date_of_birth: Optional[date] = None,
+    forced_type: str = "",
+) -> Extraction:
+    """Identify and parse one uploaded file."""
+    lowered = filename.lower()
+
+    # ---- Spreadsheets and CSVs are always broker or bank exports ----------
+    if lowered.endswith(_TABULAR_SUFFIXES):
+        return broker.parse_tabular(raw, filename)
+
+    # ---- AIS JSON ---------------------------------------------------------
+    if lowered.endswith(".json"):
+        return ais.parse("", filename, raw=raw)
+
+    if not lowered.endswith(".pdf"):
+        out = Extraction(document_type="unknown", source_filename=filename)
+        out.warnings.append(
+            f"{filename} is not a file type this system reads. Upload a PDF, "
+            "CSV, XLSX or the AIS JSON."
+        )
+        return out
+
+    # ---- PDFs -------------------------------------------------------------
+    passwords = candidate_passwords(pan, date_of_birth)
+    try:
+        text = extract_pdf_text(raw, passwords)
+    except PasswordRequired as exc:
+        out = Extraction(document_type="unknown", source_filename=filename)
+        out.warnings.append(str(exc))
+        return out
+
+    if len(text.strip()) < 40:
+        out = Extraction(document_type="unknown", source_filename=filename)
+        out.warnings.append(
+            f"{filename} appears to be a scanned image — no text could be "
+            "extracted. Re-download the digitally generated PDF, or enter the "
+            "figures by hand."
+        )
+        return out
+
+    scores = {name: scorer(text) for name, scorer, _ in _PDF_PARSERS}
+    # A broker statement occasionally arrives as a PDF.
+    scores[broker.DOC_TYPE] = max(
+        broker.score(text), broker.score_filename(filename)
+    )
+
+    chosen = forced_type or max(scores, key=lambda key: scores[key])
+    if not forced_type and scores.get(chosen, 0) < 0.25:
+        out = Extraction(document_type="unknown", source_filename=filename)
+        out.raw_text_excerpt = text[:1500]
+        out.warnings.append(
+            f"Could not tell what {filename} is. Pick the document type by "
+            "hand and upload it again."
+        )
+        return out
+
+    tables = []
+    if chosen in ("form26as", "ais", "form16"):
+        try:
+            tables = extract_pdf_tables(raw, passwords)
+        except Exception:  # noqa: BLE001 - tables are a bonus, not a requirement
+            tables = []
+
+    if chosen == broker.DOC_TYPE:
+        out = Extraction(document_type=broker.DOC_TYPE, source_filename=filename)
+        out.warnings.append(
+            "This looks like a broker capital-gains statement in PDF form. "
+            "The Excel or CSV export from your broker parses far more "
+            "reliably — please upload that instead."
+        )
+        out.raw_text_excerpt = text[:1500]
+        return out
+
+    parser = dict((name, fn) for name, _, fn in _PDF_PARSERS)[chosen]
+    extraction = parser(text, filename, tables)
+
+    # Record the runner-up so an ambiguous document can be flagged.
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < 0.15 and ranked[1][1] > 0.3:
+        extraction.warnings.append(
+            f"{filename} could also be a "
+            f"{DOCUMENT_LABELS.get(ranked[1][0], ranked[1][0])}. "
+            "Check the extracted figures carefully."
+        )
+    return extraction
+
+
+def parse_many(
+    files: Sequence[Tuple[str, bytes]],
+    *,
+    pan: str = "",
+    date_of_birth: Optional[date] = None,
+) -> List[Extraction]:
+    """Parse a whole batch, tolerating failures on individual files."""
+    results: List[Extraction] = []
+    known_pan = pan
+    # Two passes: the first may discover the PAN, which the second needs to
+    # decrypt the password-protected AIS and 26AS.
+    for name, raw in files:
+        try:
+            extraction = parse_document(
+                raw, name, pan=known_pan, date_of_birth=date_of_birth
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
+            extraction = Extraction(document_type="unknown", source_filename=name)
+            extraction.warnings.append(f"{name} could not be read: {exc}")
+        results.append(extraction)
+        if not known_pan:
+            for fact in extraction.facts:
+                if fact.path == "taxpayer.pan":
+                    known_pan = str(fact.value)
+                    break
+    return results

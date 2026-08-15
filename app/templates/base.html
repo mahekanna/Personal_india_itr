@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Personal India ITR{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧾</text></svg>">
+</head>
+<body>
+<header class="masthead">
+  <a class="wordmark" href="/">
+    <span class="wordmark-mark">₹</span>
+    <span>Personal India ITR</span>
+  </a>
+  <div class="masthead-meta">
+    {% if record is defined and record %}
+      <span class="pill">AY {{ record.assessment_year }}</span>
+      {% if tr.taxpayer.pan %}<span class="pill pill-quiet">{{ tr.taxpayer.pan }}</span>{% endif %}
+    {% endif %}
+    <span class="pill pill-quiet">Everything stays on this machine</span>
+  </div>
+</header>
+
+{% if step is defined %}
+{% set steps = [
+  (1, 'Documents', 'documents'),
+  (2, 'Review', 'review'),
+  (3, 'Income', 'income'),
+  (4, 'Regime', 'compare'),
+  (5, 'File', 'file')
+] %}
+<nav class="stepper" aria-label="Filing progress">
+  {% for number, label, slug in steps %}
+  <a class="step {% if number == step %}step-current{% elif number < step %}step-done{% endif %}"
+     href="/returns/{{ record.id }}/{{ slug }}">
+    <span class="step-number">{{ number }}</span>
+    <span class="step-label">{{ label }}</span>
+  </a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+<main class="shell">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="footer">
+  <p>
+    Prepared locally. Direct submission to the department needs an e-Return
+    Intermediary licence, so this system takes you to a portal-ready JSON and a
+    field-by-field filing pack — you upload and submit.
+  </p>
+  <p class="footer-fine">
+    A working tool, not professional tax advice. Check every figure against the
+    portal preview before you submit.
+  </p>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

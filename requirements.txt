@@ -1,0 +1,19 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+jinja2==3.1.5
+
+# Data / persistence
+SQLAlchemy==2.0.36
+pydantic==2.10.4
+
+# Document parsing (open source)
+pdfplumber==0.11.4          # PDF text + table extraction (Form 16, 26AS, AIS)
+pypdf==5.1.0                # PDF decryption (AIS/26AS are password protected)
+pandas==2.2.3               # Broker P&L, AIS Excel, bank statements
+openpyxl==3.1.5             # .xlsx reader backend
+xlrd==2.0.1                 # legacy .xls reader backend
+
+# Reporting
+reportlab==4.2.5            # Computation sheet PDF

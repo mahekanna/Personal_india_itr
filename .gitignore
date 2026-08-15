@@ -1,0 +1,31 @@
+# Never, ever commit tax documents or a returns database.
+*.db
+*.sqlite
+*.sqlite3
+.india-itr/
+uploads/
+data/
+
+# Real tax documents, if anyone drops them in the tree by accident.
+Form16*.pdf
+*26AS*.pdf
+AIS*.pdf
+AIS*.json
+*tradewise*
+*capital_gain*.xlsx
+!tests/fixtures/*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Prepare your income tax return</h1>
+<p class="lede">
+  Drop in your Form 16, Form 26AS, the AIS and your broker statements. The
+  system reads them, reconciles them against each other, computes the tax under
+  both regimes and produces a portal-ready ITR JSON plus a filing pack.
+</p>
+
+{% if today > due_date %}
+<div class="note note-warning">
+  <strong>The due date for AY {{ current_ay }} has passed</strong>
+  It was {{ due_date.strftime('%d %B %Y') }}. A return filed now is a belated
+  one under section 139(4) — interest under sections 234A and 234B runs, and a
+  fee under section 234F applies. The computation accounts for all three.
+</div>
+{% endif %}
+
+<div class="grid grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Start a return</h2></div>
+    <form method="post" action="/returns/new">
+      <div class="field">
+        <label for="assessment_year">Assessment year</label>
+        <select id="assessment_year" name="assessment_year">
+          {% for ay in assessment_years %}
+          <option value="{{ ay }}" {% if ay == current_ay %}selected{% endif %}>
+            AY {{ ay }}{% if ay == current_ay %} — current{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="label">Give it a name (optional)</label>
+        <input type="text" id="label" name="label" placeholder="My return, AY {{ current_ay }}">
+      </div>
+      <button class="btn" type="submit">Start →</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Quick regime check</h2></div>
+    <p class="hint">A rough comparison before you gather any paperwork.</p>
+    <div class="grid grid-2">
+      <div class="field">
+        <label for="q_salary">Annual gross salary</label>
+        <input type="number" id="q_salary" value="1500000" step="1000">
+      </div>
+      <div class="field">
+        <label for="q_80c">Section 80C investments</label>
+        <input type="number" id="q_80c" value="150000" step="1000">
+      </div>
+      <div class="field">
+        <label for="q_80d">Health insurance (80D)</label>
+        <input type="number" id="q_80d" value="25000" step="1000">
+      </div>
+      <div class="field">
+        <label for="q_interest">Bank interest</label>
+        <input type="number" id="q_interest" value="0" step="1000">
+      </div>
+    </div>
+    <button class="btn btn-quiet" id="q_go" type="button">Compare regimes</button>
+    <div id="q_out" style="margin-top:.9rem"></div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Your returns</h2>
+    <span class="hint" style="margin:0">Stored in a local SQLite file, nowhere else.</span>
+  </div>
+  {% if returns %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Return</th><th>Assessment year</th><th>Documents</th>
+          <th>Last changed</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for item in returns %}
+      <tr>
+        <td><a href="/returns/{{ item.id }}/documents">
+          {{ item.label or 'Untitled return' }}</a></td>
+        <td>AY {{ item.assessment_year }}</td>
+        <td>{{ item.documents | length }}</td>
+        <td>{{ item.updated_at.strftime('%d %b %Y, %H:%M') }}</td>
+        <td class="num">
+          <form method="post" action="/returns/{{ item.id }}/delete"
+                onsubmit="return confirm('Delete this return and everything in it?')">
+            <button class="btn btn-danger btn-small" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty">No returns yet. Start one above.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>What this does, and where it stops</h2></div>
+  <div class="grid grid-2">
+    <div>
+      <h3>It does</h3>
+      <ul style="font-size:.88rem; color:var(--ink-soft); padding-left:1.1rem">
+        <li>Read Form 16, Form 26AS, the AIS (PDF or JSON), bank interest
+            certificates and broker capital-gains exports</li>
+        <li>Reconcile TDS against 26AS and income against the AIS, so mismatches
+            surface before filing rather than in a notice</li>
+        <li>Compute both regimes in full — slabs, 87A with marginal relief,
+            surcharge with marginal relief, cess, and interest under 234A/B/C</li>
+        <li>Pick the right ITR form and explain why</li>
+        <li>Generate the ITR JSON and a field-by-field filing pack</li>
+      </ul>
+    </div>
+    <div>
+      <h3>It does not</h3>
+      <ul style="font-size:.88rem; color:var(--ink-soft); padding-left:1.1rem">
+        <li>Submit the return. Direct API access needs an e-Return Intermediary
+            licence, which needs a registered entity, a ₹1 crore net worth and a
+            CISA due-diligence certificate. You upload the JSON yourself.</li>
+        <li>Handle business income with books of account (ITR-3), or
+            non-resident taxation</li>
+        <li>Replace a chartered accountant on anything genuinely contentious</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

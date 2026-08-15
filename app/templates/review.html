@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Review · Personal India ITR{% endblock %}
+{% block content %}
+
+<h1>Review what was read</h1>
+<p class="lede">
+  Nothing here has touched the return yet. Untick anything that looks wrong —
+  a low confidence bar means the layout was unusual, not that the figure is
+  necessarily incorrect. You can edit every value on the next screen.
+</p>
+
+{% if not documents %}
+<section class="card">
+  <p class="empty">
+    No documents have been uploaded.
+    <a href="/returns/{{ record.id }}/documents">Upload some</a>, or
+    <a href="/returns/{{ record.id }}/income">enter the figures by hand</a>.
+  </p>
+</section>
+{% else %}
+
+<form method="post" action="/returns/{{ record.id }}/review">
+  <section class="card">
+    <div class="card-head">
+      <h2>Accept extracted figures</h2>
+      <div class="field-inline">
+        <input type="checkbox" id="select-all" checked>
+        <label for="select-all">Select all</label>
+      </div>
+    </div>
+    <div class="field-inline" style="margin-bottom:.6rem">
+      <input type="checkbox" id="prefer_26as" name="prefer_26as" checked>
+      <label for="prefer_26as">
+        Where Form 16 and Form 26AS disagree on TDS, trust Form 26AS
+        — it is the statement the department matches your claim against
+      </label>
+    </div>
+  </section>
+
+  {% for item in documents %}
+  {% set extraction = item.extraction %}
+  <section class="card">
+    <div class="card-head">
+      <h3>{{ extraction.source_filename }}</h3>
+      <span class="pill {% if extraction.confidence < 0.5 %}pill-quiet{% endif %}">
+        {{ labels.get(extraction.document_type, extraction.document_type) }}
+        · {{ (extraction.confidence * 100) | round | int }}% confident
+      </span>
+    </div>
+
+    {% for warning in extraction.warnings %}
+    <div class="note note-warning">{{ warning }}</div>
+    {% endfor %}
+
+    {% if extraction.facts %}
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th style="width:2.2rem"></th><th>Field</th><th class="num">Value</th>
+            <th style="width:5rem">Confidence</th></tr>
+      </thead>
+      <tbody>
+        {% for fact in extraction.facts %}
+        {% if not fact.path.startswith('crosscheck.') %}
+        <tr>
+          <td>
+            <input type="checkbox" name="accept" checked
+                   value="{{ extraction.source_filename }}:{{ fact.path }}">
+          </td>
+          <td>{{ fact.label }}
+            {% if fact.evidence %}
+            <div class="doc-meta">{{ fact.evidence }}</div>
+            {% endif %}
+          </td>
+          <td class="num">{{ fact.as_display() }}</td>
+          <td><span class="conf"><i style="width: {{ (fact.confidence * 100) | round | int }}%"></i></span></td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+
+    {% set crosschecks = extraction.facts | selectattr('path', 'startswith', 'crosscheck.') | list %}
+    {% if crosschecks %}
+    <h3 style="margin-top:1rem">Used only for reconciliation</h3>
+    <p class="hint">
+      These are not written into the return. They are compared against what you
+      declare, so a mismatch surfaces before you file.
+    </p>
+    <div class="table-wrap">
+    <table>
+      <tbody>
+        {% for fact in crosschecks %}
+        <tr><td>{{ fact.label }}</td><td class="num">{{ fact.as_display() }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+
+    {% if extraction.salaries %}
+    <h3 style="margin-top:1rem">Employers found</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Employer</th><th>TAN</th><th class="num">Salary 17(1)</th>
+                 <th class="num">TDS</th></tr></thead>
+      <tbody>
+        {% for row in extraction.salaries %}
+        <tr>
+          <td>{{ row.get('employer_name', '—') }}</td>
+          <td>{{ row.get('employer_tan', '—') }}</td>
+          <td class="num">{{ row.get('salary_17_1', 0) | inr }}</td>
+          <td class="num">{{ row.get('tds_deducted', 0) | inr }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+
+    {% if extraction.payments %}
+    <h3 style="margin-top:1rem">Tax credits found</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Kind</th><th>Deductor</th><th>TAN</th>
+                 <th class="num">Amount</th></tr></thead>
+      <tbody>
+        {% for row in extraction.payments %}
+        <tr>
+          <td>{{ row.get('kind', '') | replace('_', ' ') }}</td>
+          <td>{{ row.get('deductor_name', '—') }}</td>
+          <td>{{ row.get('deductor_tan', '—') }}</td>
+          <td class="num">{{ row.get('amount', 0) | inr }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+
+    {% if extraction.capital_gains %}
+    <h3 style="margin-top:1rem">
+      Capital-gain transactions found ({{ extraction.capital_gains | length }})
+    </h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Security</th><th>Bucket</th><th class="num">Sale</th>
+                 <th class="num">Cost</th><th class="num">Gain</th></tr></thead>
+      <tbody>
+        {% for row in extraction.capital_gains[:40] %}
+        <tr>
+          <td>{{ row.get('description', '—') }}</td>
+          <td>{{ row.get('category', '') | replace('_', ' ') }}</td>
+          <td class="num">{{ row.get('sale_consideration', 0) | inr }}</td>
+          <td class="num">{{ row.get('cost_of_acquisition', 0) | inr }}</td>
+          <td class="num">
+            {{ (row.get('sale_consideration', 0) - row.get('cost_of_acquisition', 0)) | inr }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if extraction.capital_gains | length > 40 %}
+    <p class="hint">
+      Showing the first 40 of {{ extraction.capital_gains | length }}. All of
+      them are imported.
+    </p>
+    {% endif %}
+    {% endif %}
+
+    {% if extraction.raw_text_excerpt %}
+    <details class="raw">
+      <summary>Show the raw text this was read from</summary>
+      <pre>{{ extraction.raw_text_excerpt }}</pre>
+    </details>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  <div class="actions">
+    <button class="btn" type="submit">Apply to the return →</button>
+    <a class="btn btn-quiet" href="/returns/{{ record.id }}/documents">
+      Upload more first
+    </a>
+  </div>
+</form>
+{% endif %}
+
+{% endblock %}
