@@ -22,6 +22,7 @@ from .schemas import (
     SalaryIncome,
     TaxPayment,
     TaxReturn,
+    TradingSegment,
 )
 
 
@@ -91,6 +92,14 @@ def apply_extractions(
         )
         if added_sales:
             log.append(f"Added {added_sales} foreign share sale(s)")
+
+        for row in extraction.trading_segments:
+            if _merge_trading_segment(tr, row):
+                log.append(
+                    f"Added {row.get('segment')} trading income of "
+                    f"₹{D(row.get('gross_profit', 0)):,.0f} on turnover of "
+                    f"₹{D(row.get('turnover', 0)):,.0f}"
+                )
 
         for warning in extraction.warnings:
             if warning not in tr.notes:
@@ -217,6 +226,43 @@ def _merge_foreign_sale(tr: TaxReturn, row: Dict[str, Any]) -> bool:
         ):
             return False
     tr.foreign_sales.append(ForeignSale(**row))
+    return True
+
+
+def _merge_trading_segment(tr: TaxReturn, row: Dict[str, Any]) -> bool:
+    """One row per segment, accumulated across files.
+
+    A trader often has two statements for the year — one per exchange, or a
+    revised one — and the segments have to add rather than replace. Uploading
+    the same file twice would then double the income, so an identical
+    profit-and-turnover pair from the same document is treated as a repeat.
+    """
+    segment = row.get("segment")
+    if not segment:
+        return False
+
+    existing = next(
+        (s for s in tr.trading_segments if s.segment == segment), None
+    )
+    if existing is None:
+        tr.trading_segments.append(TradingSegment(**row))
+        return True
+
+    if (
+        existing.source_document == row.get("source_document", "")
+        and existing.gross_profit == D(row.get("gross_profit", 0))
+        and existing.turnover == D(row.get("turnover", 0))
+    ):
+        return False
+
+    for field in (
+        "gross_profit", "turnover", "option_sell_premium", "brokerage",
+        "exchange_transaction_charges", "securities_transaction_tax",
+        "sebi_turnover_fees", "stamp_duty", "gst", "depository_charges",
+        "other_expenses",
+    ):
+        if field in row:
+            setattr(existing, field, getattr(existing, field) + D(row[field]))
     return True
 
 

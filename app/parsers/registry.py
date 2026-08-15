@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from . import ais, bank, broker, form16, form26as, us_equity
+from . import ais, bank, broker, form16, form26as, trading_pnl, us_equity
 from .base import (  # noqa: F401 - PasswordRequired is re-raised below
     Extraction,
     PasswordRequired,
@@ -34,6 +34,7 @@ DOCUMENT_LABELS = {
     "ais": "Annual Information Statement",
     "bank_interest": "Bank interest certificate",
     "broker_pnl": "Broker capital-gains statement",
+    "trading_pnl": "Trading P&L — F&O, intraday, currency, commodity",
     "us_equity": "US stock-plan or brokerage statement (RSU, dividends, sales)",
     "unknown": "Unrecognised document",
 }
@@ -152,6 +153,8 @@ def _parse_tabular(raw: bytes, filename: str, forced_type: str = "") -> Extracti
         return us_equity.parse_tabular(raw, filename)
     if forced_type == "broker_pnl":
         return broker.parse_tabular(raw, filename)
+    if forced_type == "trading_pnl":
+        return trading_pnl.parse_tabular(raw, filename)
 
     prefer_us = us_equity.score_filename(filename) > 0
 
@@ -166,8 +169,22 @@ def _parse_tabular(raw: bytes, filename: str, forced_type: str = "") -> Extracti
         if found_anything(result):
             return result
 
+    # An Indian broker's annual tax P&L is one workbook holding both: a
+    # capital-gains sheet for delivery, and F&O, intraday, currency and
+    # commodity sheets that are business income. Both parsers run, and the
+    # results are combined rather than one winning — reading only the sheet
+    # that happened to be recognised first is how a whole segment goes missing.
     indian = broker.parse_tabular(raw, filename)
-    if indian.capital_gains:
+    trading = trading_pnl.parse_tabular(raw, filename)
+
+    if trading.trading_segments:
+        indian.trading_segments = trading.trading_segments
+        indian.warnings.extend(trading.warnings)
+        if not indian.capital_gains:
+            indian.document_type = trading_pnl.DOC_TYPE
+        indian.confidence = max(indian.confidence, trading.confidence)
+
+    if indian.capital_gains or indian.trading_segments:
         return indian
 
     if not prefer_us:

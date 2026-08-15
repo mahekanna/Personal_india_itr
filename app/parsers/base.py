@@ -59,6 +59,9 @@ class Extraction:
     espp_purchases: List[Dict[str, Any]] = field(default_factory=list)
     dividends: List[Dict[str, Any]] = field(default_factory=list)
     foreign_sales: List[Dict[str, Any]] = field(default_factory=list)
+    # F&O, intraday, currency and commodity — business income, not capital
+    # gains, so they never mix with ``capital_gains`` above.
+    trading_segments: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     raw_text_excerpt: str = ""
     # Set when the file is an encrypted PDF none of the candidate passwords

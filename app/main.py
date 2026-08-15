@@ -1071,6 +1071,7 @@ def _encode_extraction(extraction: Extraction) -> str:
         "espp_purchases": convert(extraction.espp_purchases),
         "dividends": convert(extraction.dividends),
         "foreign_sales": convert(extraction.foreign_sales),
+        "trading_segments": convert(extraction.trading_segments),
         "warnings": extraction.warnings,
         "raw_text_excerpt": extraction.raw_text_excerpt,
     })
@@ -1111,6 +1112,7 @@ def _decode_extraction(payload: Dict[str, Any]) -> Extraction:
     extraction.espp_purchases = convert(payload.get("espp_purchases", []))
     extraction.dividends = convert(payload.get("dividends", []))
     extraction.foreign_sales = convert(payload.get("foreign_sales", []))
+    extraction.trading_segments = convert(payload.get("trading_segments", []))
     extraction.warnings = payload.get("warnings", [])
     extraction.raw_text_excerpt = payload.get("raw_text_excerpt", "")
     return extraction
