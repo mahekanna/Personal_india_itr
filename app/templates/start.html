@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Where to start · Personal India ITR{% endblock %}
+{% block content %}
+
+<h1>What kind of return is this?</h1>
+<p class="lede">
+  Nobody knows which documents to gather until they know which form they are
+  filing, and nobody knows the form until someone asks what the year actually
+  looked like. Answer these — it takes a minute — and you get both: the form,
+  and a list of exactly what to go and fetch.
+</p>
+
+<form method="post" action="/returns/{{ record.id }}/start">
+  {% for group, questions in groups %}
+  <section class="card">
+    <h2>{{ group }}</h2>
+    {% for question in questions %}
+    <div class="field-inline" style="align-items:flex-start; margin-bottom:1rem">
+      <input type="checkbox" id="q_{{ question.key }}" name="{{ question.key }}"
+             {% if answers.get(question.key) %}checked{% endif %}>
+      <div>
+        <label for="q_{{ question.key }}"><strong>{{ question.text }}</strong></label>
+        {% if question.help %}<div class="hint">{{ question.help }}</div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+
+  <div class="actions">
+    <button class="btn btn-primary" type="submit">
+      {% if guidance %}Update the answers{% else %}Show me what I need{% endif %}
+    </button>
+    {% if guidance %}
+    <a class="btn btn-quiet" href="/returns/{{ record.id }}/documents">
+      Go on to uploading &rarr;
+    </a>
+    {% endif %}
+  </div>
+</form>
+
+{% if guidance %}
+<section class="card">
+  <h2>You are filing {{ guidance.form }}</h2>
+  {% for reason in guidance.form_reasons %}
+  <p>{{ reason }}</p>
+  {% endfor %}
+  {% if not guidance.form_supported %}
+  <p class="warning"><strong>{{ guidance.form_note }}</strong></p>
+  {% elif guidance.form_note %}
+  <p class="hint">{{ guidance.form_note }}</p>
+  {% endif %}
+  {% if guidance.disqualifications is defined %}{% endif %}
+</section>
+
+<section class="card">
+  <h2>What to gather — {{ guidance.document_count }} items</h2>
+  <p class="hint">
+    The starred ones are needed to file at all. The rest are needed only if they
+    apply to you, but each is worth checking: most of what goes wrong on an
+    Indian return is a document nobody knew to collect.
+  </p>
+
+  {% for group, items in guidance.documents.items() %}
+  <h3>{{ group }}</h3>
+  <ul class="checklist">
+    {% for item in items %}
+    <li>
+      <strong>{% if item.essential %}★ {% endif %}{{ item.name }}</strong>
+      <div class="hint">Where: {{ item.where }}</div>
+      {% if item.why %}<div class="hint">{{ item.why }}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+</section>
+
+{% if guidance.warnings %}
+<section class="card">
+  <h2>Worth knowing before you start</h2>
+  {% for warning in guidance.warnings %}
+  <p class="warning">{{ warning }}</p>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Dates that matter</h2>
+  <ul class="checklist">
+    {% for deadline in guidance.deadlines %}
+    <li>{{ deadline }}</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<div class="actions">
+  <a class="btn btn-primary" href="/returns/{{ record.id }}/documents">
+    I have these — upload them &rarr;
+  </a>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -9,6 +9,30 @@
   screen before it touches the return.
 </p>
 
+{% if guidance %}
+<section class="card">
+  <h2>Your checklist — {{ guidance.form }}</h2>
+  <p class="hint">
+    From the answers you gave on the <a href="/returns/{{ record.id }}/start">first
+    screen</a>. Starred items are needed to file at all.
+  </p>
+  {% for group, items in guidance.documents.items() %}
+  <h3>{{ group }}</h3>
+  <ul class="checklist">
+    {% for item in items %}
+    <li><strong>{% if item.essential %}★ {% endif %}{{ item.name }}</strong>
+      <div class="hint">{{ item.where }}</div></li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+</section>
+{% else %}
+<p class="hint">
+  Not sure what to upload? <a href="/returns/{{ record.id }}/start">Answer a few
+  questions first</a> and you will get a list of exactly what to fetch.
+</p>
+{% endif %}
+
 <form method="post" action="/returns/{{ record.id }}/documents"
       enctype="multipart/form-data">
   <section class="card">

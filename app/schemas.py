@@ -737,8 +737,21 @@ class TaxesPaid(_Base):
 # --------------------------------------------------------------------------
 
 
+class Profile(_Base):
+    """Answers to the opening questionnaire.
+
+    Stored so the document checklist stays live — the upload page can show what
+    is still outstanding rather than a bare drop zone — and so the form
+    prediction can be revisited without asking again.
+    """
+
+    answered: bool = False
+    answers: Dict[str, bool] = Field(default_factory=dict)
+
+
 class TaxReturn(_Base):
     assessment_year: str = "2026-27"
+    profile: Profile = Field(default_factory=Profile)
     regime_choice: Literal["auto", "new", "old"] = "auto"
     filing_date: Optional[date] = None
     is_revised: bool = False

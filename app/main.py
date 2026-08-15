@@ -1,9 +1,11 @@
 """The web application.
 
-A six-step wizard — upload documents, review what was extracted, fill the gaps,
-work through the foreign income, compare the two regimes, generate the filing
-pack — plus the advance-tax planner, which sits outside the wizard because it
-looks forward at the year in progress rather than back at the one being filed.
+A wizard that opens by asking what the year looked like — because nobody knows
+which documents to gather until they know which form they are filing — and then
+runs through uploading, reviewing what was extracted, filling the gaps, the
+foreign income, the regime comparison and the filing pack. The advance-tax
+planner sits outside it, because it looks forward at the year in progress rather
+than back at the one being filed.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from .merge import apply_extractions, replace_tds_from_26as
 from .money import D, inr
 from .parsers.base import Extraction, Fact
 from .parsers.registry import DOCUMENT_LABELS, parse_document
+from .questionnaire import QUESTIONS, build_guidance, grouped_questions
 from .reconcile import reconcile
 from .planner import build_planner, record_payment_hint
 from .schemas import (
@@ -44,6 +47,7 @@ from .schemas import (
     ForeignHolding,
     ForeignSale,
     HouseProperty,
+    Profile,
     RSUVest,
     SalaryIncome,
     TaxPayment,
@@ -142,7 +146,7 @@ def new_return(
     record = get_or_create_return(session, None, assessment_year)
     record.label = label or f"Return for AY {assessment_year}"
     session.commit()
-    return RedirectResponse(f"/returns/{record.id}/documents", status_code=303)
+    return RedirectResponse(f"/returns/{record.id}/start", status_code=303)
 
 
 @app.post("/returns/{return_id}/delete")
@@ -151,6 +155,49 @@ def delete_return(return_id: str, session: Session = Depends(db_session)):
     session.delete(record)
     session.commit()
     return RedirectResponse("/", status_code=303)
+
+
+# --------------------------------------------------------------------------
+# Step 0 — what kind of return, and what to go and fetch
+# --------------------------------------------------------------------------
+
+
+@app.get("/returns/{return_id}/start", response_class=HTMLResponse)
+def start_page(
+    request: Request, return_id: str, session: Session = Depends(db_session)
+):
+    record = _load(session, return_id)
+    tr = record.load()
+    guidance = (
+        build_guidance(tr.profile.answers, tr.assessment_year)
+        if tr.profile.answered else None
+    )
+    return render("start.html",
+        _ctx(request, record, step=0, groups=grouped_questions(),
+             answers=tr.profile.answers, guidance=guidance),
+    )
+
+
+@app.post("/returns/{return_id}/start")
+async def save_start(
+    request: Request, return_id: str, session: Session = Depends(db_session)
+):
+    record = _load(session, return_id)
+    tr = record.load()
+    form = await request.form()
+
+    # Every question is a checkbox, so an unticked one sends nothing at all.
+    # Reading only what arrived would make "no" indistinguishable from "not
+    # asked", and the checklist would quietly shrink.
+    tr.profile = Profile(
+        answered=True,
+        answers={q.key: form.get(q.key) == "on" for q in QUESTIONS},
+    )
+    if not tr.profile.answers.get("resident"):
+        tr.taxpayer.residential_status = "NRI"
+    record.save(tr)
+    session.commit()
+    return RedirectResponse(f"/returns/{return_id}/start", status_code=303)
 
 
 # --------------------------------------------------------------------------
@@ -163,9 +210,14 @@ def documents_page(
     request: Request, return_id: str, session: Session = Depends(db_session)
 ):
     record = _load(session, return_id)
+    tr = record.load()
+    guidance = (
+        build_guidance(tr.profile.answers, tr.assessment_year)
+        if tr.profile.answered else None
+    )
     return render("documents.html",
         _ctx(request, record, step=1, labels=DOCUMENT_LABELS,
-             documents=record.documents),
+             documents=record.documents, guidance=guidance),
     )
 
 
