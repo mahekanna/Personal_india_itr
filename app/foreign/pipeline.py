@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 from ..money import D
 from ..schemas import ForeignTaxPayment, TaxReturn
 from . import dividends as dividend_module
+from . import espp as espp_module
 from . import rsu as rsu_module
 from . import vesting as vesting_module
 from .forex import ForexTable
@@ -29,6 +30,9 @@ class ForeignResult:
 
     vests: rsu_module.ForeignEquityResult = field(
         default_factory=rsu_module.ForeignEquityResult
+    )
+    espp: espp_module.ESPPComputation = field(
+        default_factory=espp_module.ESPPComputation
     )
     dividends: dividend_module.DividendResult = field(
         default_factory=dividend_module.DividendResult
@@ -66,7 +70,8 @@ def apply_foreign(
     """
     result = ForeignResult()
     if not (tr.rsu_vests or tr.dividends or tr.foreign_sales
-            or tr.foreign_holdings or tr.vesting_schedules):
+            or tr.foreign_holdings or tr.vesting_schedules
+            or tr.espp_purchases):
         return tr, result
 
     working = deepcopy(tr)
@@ -96,6 +101,9 @@ def apply_foreign(
     # Projections are stripped unless this is a planning run.
     if not include_projected:
         working.rsu_vests = [v for v in working.rsu_vests if not v.is_projected]
+        working.espp_purchases = [
+            p for p in working.espp_purchases if not p.is_projected
+        ]
         working.foreign_sales = [
             s for s in working.foreign_sales if not s.is_projected
         ]
@@ -106,6 +114,13 @@ def apply_foreign(
     result.warnings.extend(vests.warnings)
 
     perquisite = rsu_module.perquisite_to_add_to_salary(vests)
+
+    # -- 1b. ESPP: the discount is salary too, under the same section --------
+    espp = espp_module.compute_espp(working, forex)
+    result.espp = espp
+    result.warnings.extend(espp.warnings)
+    perquisite += espp_module.perquisite_to_add_to_salary(espp)
+
     if perquisite > 0:
         _add_perquisite_to_salary(working, perquisite)
         result.perquisite_added_to_salary = perquisite
@@ -120,7 +135,7 @@ def apply_foreign(
     result.warnings.extend(drip_warnings)
 
     # -- 3. Lots, and the sales matched against them ------------------------
-    lots = vests.lots + drip_lots
+    lots = vests.lots + espp.lots + drip_lots
     result.lots = lots
 
     sales = [
@@ -209,6 +224,7 @@ def _warn_about_rates(
 ) -> None:
     dates = (
         [v.vest_date for v in tr.rsu_vests]
+        + [p.purchase_date for p in tr.espp_purchases]
         + [d.pay_date for d in tr.dividends]
         + [s.sale_date for s in tr.foreign_sales]
     )

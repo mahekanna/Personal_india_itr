@@ -100,6 +100,40 @@ _ALIASES: Dict[str, Tuple[str, ...]] = {
     ),
     "fees": ("commission", "fees", "commission and fees", "transaction fee"),
     "action": ("action", "type", "transaction type", "activity", "record type"),
+    # -- ESPP ------------------------------------------------------------
+    "purchase_date_espp": (
+        "purchase date", "date of purchase", "espp purchase date",
+        "exercise date", "date acquired",
+    ),
+    "offering_start": (
+        "offering date", "grant date", "offering start date", "subscription date",
+        "offering period begin", "grant/offering date", "period start",
+    ),
+    "shares_purchased_espp": (
+        "shares purchased", "qty. purchased", "quantity purchased",
+        "shares acquired", "no. of shares purchased", "purchased quantity",
+    ),
+    "purchase_price": (
+        "purchase price", "price paid", "purchase price per share",
+        "espp purchase price", "your price", "discounted price",
+        "purchase price per share (usd)",
+    ),
+    "fmv_at_purchase": (
+        "market value per share on purchase date", "fmv on purchase date",
+        "market value at purchase", "purchase date market value",
+        "fair market value at purchase", "closing price on purchase date",
+        "market value per share",
+    ),
+    "fmv_at_offering": (
+        "grant date market value", "offering date market value",
+        "market value at offering", "fmv on grant date",
+        "grant date fair market value", "offering price",
+    ),
+    "contributions": (
+        "contributions", "total contributions", "payroll deductions",
+        "amount contributed", "employee contribution",
+    ),
+    "refund": ("refund", "refunded", "cash returned", "residual cash"),
 }
 
 # Words that identify what kind of file this is.
@@ -108,6 +142,8 @@ _VEST_HINTS = ("vest", "release", "restricted stock", "rsu", "stock plan",
 _DIVIDEND_HINTS = ("dividend", "1099-div", "reinvest", "drip", "distribution")
 _SALE_HINTS = ("1099-b", "gain", "loss", "sold", "proceeds", "disposition",
                "realized")
+_ESPP_HINTS = ("espp", "stock purchase", "employee stock purchase", "purchase",
+               "offering", "subscription", "3922")
 
 
 def score_filename(filename: str) -> float:
@@ -149,14 +185,19 @@ def parse_tabular(raw: bytes, filename: str) -> Extraction:
         mapping = _map_columns(body.columns)
         kind = _classify_sheet(sheet_name, body.columns, mapping)
 
-        if kind == "vest":
+        if kind == "espp":
+            _read_espp(body, mapping, out, filename)
+        elif kind == "vest":
             _read_vests(body, mapping, out, filename)
         elif kind == "dividend":
             _read_dividends(body, mapping, out, filename)
         elif kind == "sale":
             _read_sales(body, mapping, out, filename)
 
-    total = len(out.rsu_vests) + len(out.dividends) + len(out.foreign_sales)
+    total = (
+        len(out.rsu_vests) + len(out.dividends) + len(out.foreign_sales)
+        + len(out.espp_purchases)
+    )
     if total:
         out.confidence = 0.85
         _summarise(out)
@@ -185,6 +226,19 @@ def _summarise(out: Extraction) -> None:
             f"{len(reinvested)} of {len(out.dividends)} dividend(s) were "
             "reinvested. Each reinvestment is taxable income now and creates a "
             "new lot with its own 24-month holding clock."
+        )
+    if out.espp_purchases:
+        discount = sum(
+            (D(p.get("fmv_per_share_fx", 0)) - D(p.get("price_paid_per_share_fx", 0)))
+            * D(p.get("shares_purchased", 0))
+            for p in out.espp_purchases
+        )
+        out.warnings.append(
+            f"{len(out.espp_purchases)} ESPP purchase(s) were read, with a "
+            f"discount of about {out.espp_purchases[0].get('currency', 'USD')} "
+            f"{discount:,.2f} in total. That discount is salary under section "
+            "17(2)(vi). On sale the cost basis is the fair market value, not "
+            "the price you paid — this file will show the price you paid."
         )
     if out.foreign_sales:
         out.warnings.append(
@@ -274,6 +328,15 @@ def _map_columns(columns) -> Dict[str, str]:
 def _classify_sheet(sheet_name: str, columns, mapping: Dict[str, str]) -> str:
     blob = (str(sheet_name) + " " + " ".join(str(c) for c in columns)).lower()
 
+    # ESPP is checked first, because a purchase report has both a date and a
+    # quantity and would otherwise look like a vesting report. What sets it
+    # apart is a price the employee paid.
+    has_espp = "purchase_price" in mapping and (
+        "fmv_at_purchase" in mapping or "fmv" in mapping
+    )
+    if has_espp and any(hint in blob for hint in _ESPP_HINTS):
+        return "espp"
+
     has_vest_date = "vest_date" in mapping
     has_dividend = "dividend_amount" in mapping and (
         "pay_date" in mapping or "dividend" in blob
@@ -289,6 +352,8 @@ def _classify_sheet(sheet_name: str, columns, mapping: Dict[str, str]) -> str:
     if has_sale and any(hint in blob for hint in _SALE_HINTS):
         return "sale"
     # Fall back on structure when the wording gives nothing away.
+    if has_espp:
+        return "espp"
     if has_vest_date:
         return "vest"
     if has_sale:
@@ -344,6 +409,41 @@ def _read_vests(frame, mapping, out: Extraction, filename: str) -> None:
             "fmv_per_share_fx": fmv,
             "shares_sold_to_cover": _money(row, mapping, "shares_sold_to_cover"),
             "sale_price_per_share_fx": _money(row, mapping, "sale_price") or fmv,
+            "currency": "USD",
+            "country_code": "2",
+            "source_document": filename,
+        })
+
+
+def _read_espp(frame, mapping, out: Extraction, filename: str) -> None:
+    for _, row in frame.iterrows():
+        purchase_date = parse_date(
+            _cell(row, mapping, "purchase_date_espp")
+            or _cell(row, mapping, "vest_date")
+        )
+        shares = (
+            _money(row, mapping, "shares_purchased_espp")
+            or _money(row, mapping, "shares_vested")
+        )
+        price_paid = _money(row, mapping, "purchase_price")
+        fmv = _money(row, mapping, "fmv_at_purchase") or _money(row, mapping, "fmv")
+        symbol = _cell(row, mapping, "symbol")
+
+        if purchase_date is None or shares <= 0 or price_paid <= 0:
+            continue
+        if _is_noise(symbol) and not fmv:
+            continue
+
+        out.espp_purchases.append({
+            "symbol": _clean_symbol(symbol),
+            "offering_start_date": parse_date(_cell(row, mapping, "offering_start")),
+            "purchase_date": purchase_date,
+            "shares_purchased": shares,
+            "fmv_per_share_fx": fmv,
+            "price_paid_per_share_fx": price_paid,
+            "offering_price_fx": _money(row, mapping, "fmv_at_offering"),
+            "contributions_fx": _money(row, mapping, "contributions"),
+            "refund_fx": _money(row, mapping, "refund"),
             "currency": "USD",
             "country_code": "2",
             "source_document": filename,

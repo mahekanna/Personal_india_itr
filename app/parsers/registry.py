@@ -154,9 +154,15 @@ def _parse_tabular(raw: bytes, filename: str, forced_type: str = "") -> Extracti
 
     prefer_us = us_equity.score_filename(filename) > 0
 
+    def found_anything(extraction) -> bool:
+        return bool(
+            extraction.rsu_vests or extraction.espp_purchases
+            or extraction.dividends or extraction.foreign_sales
+        )
+
     if prefer_us:
         result = us_equity.parse_tabular(raw, filename)
-        if result.rsu_vests or result.dividends or result.foreign_sales:
+        if found_anything(result):
             return result
 
     indian = broker.parse_tabular(raw, filename)
@@ -165,7 +171,7 @@ def _parse_tabular(raw: bytes, filename: str, forced_type: str = "") -> Extracti
 
     if not prefer_us:
         result = us_equity.parse_tabular(raw, filename)
-        if result.rsu_vests or result.dividends or result.foreign_sales:
+        if found_anything(result):
             return result
 
     return indian

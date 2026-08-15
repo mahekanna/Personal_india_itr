@@ -70,7 +70,7 @@ def select_form(tr: TaxReturn) -> FormDecision:
             "Presumptive business or professional income belongs in ITR-4."
         )
     if tr.taxpayer.has_foreign_assets or tr.foreign_assets or tr.rsu_vests \
-            or tr.foreign_holdings:
+            or tr.foreign_holdings or tr.espp_purchases:
         blocks.append(
             "Foreign assets rule out ITR-1 outright. RSUs, ESPP shares or any "
             "overseas holding mean Schedule FA, which only ITR-2 and ITR-3 "

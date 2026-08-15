@@ -15,6 +15,7 @@ from .parsers.base import Extraction
 from .schemas import (
     CapitalGainItem,
     DividendReceipt,
+    ESPPPurchase,
     ForeignSale,
     HouseProperty,
     RSUVest,
@@ -72,6 +73,12 @@ def apply_extractions(
         added_vests = sum(1 for row in extraction.rsu_vests if _merge_vest(tr, row))
         if added_vests:
             log.append(f"Added {added_vests} RSU vesting tranche(s)")
+
+        added_espp = sum(
+            1 for row in extraction.espp_purchases if _merge_espp(tr, row)
+        )
+        if added_espp:
+            log.append(f"Added {added_espp} ESPP purchase(s)")
 
         added_dividends = sum(
             1 for row in extraction.dividends if _merge_dividend(tr, row)
@@ -174,6 +181,18 @@ def _merge_vest(tr: TaxReturn, row: Dict[str, Any]) -> bool:
         ):
             return False
     tr.rsu_vests.append(RSUVest(**row))
+    return True
+
+
+def _merge_espp(tr: TaxReturn, row: Dict[str, Any]) -> bool:
+    for existing in tr.espp_purchases:
+        if (
+            existing.symbol.upper() == str(row.get("symbol", "")).upper()
+            and existing.purchase_date == row.get("purchase_date")
+            and existing.shares_purchased == D(row.get("shares_purchased", 0))
+        ):
+            return False
+    tr.espp_purchases.append(ESPPPurchase(**row))
     return True
 
 

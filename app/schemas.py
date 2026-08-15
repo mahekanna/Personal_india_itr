@@ -270,6 +270,81 @@ class RSUVest(_Base):
         return self.shares_vested - self.shares_sold_to_cover
 
 
+class ESPPPurchase(_Base):
+    """One purchase under an Employee Stock Purchase Plan.
+
+    An ESPP takes payroll deductions over an offering period and buys shares at
+    a discount at the end of it. Two things follow, and the second is where
+    money gets lost:
+
+    **The discount is salary.** Section 17(2)(vi) taxes the difference between
+    the fair market value on the date of allotment and what you actually paid,
+    at slab rates, with TDS under section 192 in the month of purchase. Your own
+    contributions are not deductible — they came out of taxed salary already.
+
+    **The cost basis on sale is the fair market value, not the price you paid.**
+    Section 49(2AA) sets the cost at the amount already brought to tax as a
+    perquisite. Using the discounted purchase price instead — which is what the
+    broker's own statement shows, and what a US 1099-B reports — taxes the
+    discount a second time, once as salary and once as capital gain.
+
+    Most US plans also have a lookback: the price is a percentage of the *lower*
+    of the offering-start price and the purchase-date price, so the real
+    discount is often far more than the headline 15%.
+    """
+
+    symbol: str = ""
+    company_name: str = ""
+    plan_name: str = ""
+    offering_start_date: Optional[date] = None
+    # The date of allotment or transfer — the date that fixes the perquisite.
+    purchase_date: Optional[date] = None
+    shares_purchased: Money = D(0)
+    # Fair market value per share on the purchase date, per Rule 3(8).
+    fmv_per_share_fx: Money = D(0)
+    # What you actually paid per share, after the discount and any lookback.
+    price_paid_per_share_fx: Money = D(0)
+    # The price at the start of the offering period. Recorded so the lookback
+    # can be shown; it does not enter the perquisite computation.
+    offering_price_fx: Money = D(0)
+    # Total payroll deductions for the offering. Not deductible — it is only
+    # here so the purchase can be reconciled against the payslips.
+    contributions_fx: Money = D(0)
+    # Contributions returned because they did not buy a whole share. Not income.
+    refund_fx: Money = D(0)
+    currency: str = "USD"
+    country_code: str = "2"
+    forex_rate_override: Optional[Money] = None
+    included_in_form16: bool = True
+    is_projected: bool = False
+    source_document: str = ""
+
+    @property
+    def discount_per_share_fx(self) -> Money:
+        """The perquisite per share — never negative."""
+        gap = self.fmv_per_share_fx - self.price_paid_per_share_fx
+        return gap if gap > 0 else D(0)
+
+    @property
+    def total_discount_fx(self) -> Money:
+        return self.discount_per_share_fx * self.shares_purchased
+
+    @property
+    def total_cost_basis_fx(self) -> Money:
+        """Section 49(2AA): the cost is the fair market value already taxed."""
+        return self.fmv_per_share_fx * self.shares_purchased
+
+    @property
+    def amount_paid_fx(self) -> Money:
+        return self.price_paid_per_share_fx * self.shares_purchased
+
+    @property
+    def discount_fraction(self) -> Money:
+        if self.fmv_per_share_fx <= 0:
+            return D(0)
+        return self.discount_per_share_fx / self.fmv_per_share_fx
+
+
 class DividendReceipt(_Base):
     """One dividend payment, reinvested or taken in cash.
 
@@ -545,6 +620,7 @@ class TaxReturn(_Base):
 
     # -- Foreign equity ----------------------------------------------------
     rsu_vests: List[RSUVest] = Field(default_factory=list)
+    espp_purchases: List[ESPPPurchase] = Field(default_factory=list)
     vesting_schedules: List[VestingSchedule] = Field(default_factory=list)
     dividends: List[DividendReceipt] = Field(default_factory=list)
     foreign_assets: List[ForeignAsset] = Field(default_factory=list)

@@ -40,6 +40,7 @@ from .schemas import (
     CapitalGainItem,
     DividendReceipt,
     ForeignHolding,
+    ESPPPurchase,
     ForeignSale,
     HouseProperty,
     RSUVest,
@@ -413,6 +414,7 @@ async def save_foreign(
 
     tr.vesting_schedules = _collect_schedules(raw)
     tr.rsu_vests = _collect_vests(raw)
+    tr.espp_purchases = _collect_espp(raw)
     tr.dividends = _collect_dividends(raw)
     tr.foreign_sales = _collect_foreign_sales(raw)
     tr.foreign_holdings = _collect_holdings(raw)
@@ -489,6 +491,28 @@ def _collect_schedules(form) -> List[VestingSchedule]:
             sell_to_cover_fraction=D(row.get("sell_to_cover_fraction", "0.31")),
             included_in_form16=row.get("included_in_form16") == "on",
             actual_fmv=actual,
+        ))
+    return out
+
+
+def _collect_espp(form) -> List[ESPPPurchase]:
+    out: List[ESPPPurchase] = []
+    for row in _indexed(form, "espp"):
+        shares = D(row.get("shares_purchased", 0))
+        if shares <= 0:
+            continue
+        out.append(ESPPPurchase(
+            symbol=row.get("symbol", "").upper(),
+            offering_start_date=_parse_iso_date(row.get("offering_start_date", "")),
+            purchase_date=_parse_iso_date(row.get("purchase_date", "")),
+            shares_purchased=shares,
+            fmv_per_share_fx=D(row.get("fmv_per_share_fx", 0)),
+            price_paid_per_share_fx=D(row.get("price_paid_per_share_fx", 0)),
+            offering_price_fx=D(row.get("offering_price_fx", 0)),
+            contributions_fx=D(row.get("contributions_fx", 0)),
+            included_in_form16=row.get("included_in_form16") == "on",
+            forex_rate_override=D(row["forex_rate_override"])
+            if row.get("forex_rate_override") else None,
         ))
     return out
 
@@ -940,6 +964,7 @@ def _encode_extraction(extraction: Extraction) -> str:
         "capital_gains": convert(extraction.capital_gains),
         "house_properties": convert(extraction.house_properties),
         "rsu_vests": convert(extraction.rsu_vests),
+        "espp_purchases": convert(extraction.espp_purchases),
         "dividends": convert(extraction.dividends),
         "foreign_sales": convert(extraction.foreign_sales),
         "warnings": extraction.warnings,
@@ -979,6 +1004,7 @@ def _decode_extraction(payload: Dict[str, Any]) -> Extraction:
     extraction.capital_gains = convert(payload.get("capital_gains", []))
     extraction.house_properties = convert(payload.get("house_properties", []))
     extraction.rsu_vests = convert(payload.get("rsu_vests", []))
+    extraction.espp_purchases = convert(payload.get("espp_purchases", []))
     extraction.dividends = convert(payload.get("dividends", []))
     extraction.foreign_sales = convert(payload.get("foreign_sales", []))
     extraction.warnings = payload.get("warnings", [])

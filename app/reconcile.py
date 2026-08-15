@@ -232,7 +232,7 @@ def _check_foreign(tr: TaxReturn, report: ReconciliationReport) -> None:
     """Foreign holdings carry their own, much larger, failure modes."""
     has_foreign = bool(
         tr.rsu_vests or tr.dividends or tr.foreign_sales
-        or tr.foreign_holdings or tr.foreign_assets
+        or tr.foreign_holdings or tr.foreign_assets or tr.espp_purchases
     )
     if not has_foreign:
         return
@@ -302,6 +302,54 @@ def _check_foreign(tr: TaxReturn, report: ReconciliationReport) -> None:
             "Check the Form 16. If the vests really are missing from it, untick "
             "'already included in my Form 16' against each one so the "
             "perquisite is added — and expect the tax to rise accordingly.",
+        )
+
+    # -- ESPP ---------------------------------------------------------------
+    espp_discount = sum(
+        (p.total_discount_fx for p in tr.espp_purchases), D(0)
+    )
+    if espp_discount > 0 and perquisite_in_form16 <= 0:
+        report.add(
+            "warning",
+            "ESPP shares were bought at a discount but Form 16 shows no perquisite",
+            "The discount is salary under section 17(2)(vi) and is normally run "
+            "through payroll in the month of purchase.",
+            "Check the Form 16. If the discount really is missing from it, "
+            "untick 'already included in my Form 16' against each purchase so "
+            "it is added to salary here.",
+        )
+
+    missing_fmv = [
+        p for p in tr.espp_purchases
+        if p.shares_purchased > 0 and p.fmv_per_share_fx <= 0
+    ]
+    if missing_fmv:
+        report.add(
+            "error",
+            "ESPP purchase with no fair market value",
+            f"{len(missing_fmv)} purchase(s) have no fair market value on the "
+            "purchase date, so neither the perquisite nor the cost basis can be "
+            "computed.",
+            "The figure is on the purchase confirmation from your broker. "
+            "Without it the cost basis is nil and the whole sale value would be "
+            "taxed as gain.",
+        )
+
+    # The basis trap, checked against what actually reached Schedule CG.
+    espp_lots_sold = [
+        item for item in tr.capital_gains
+        if item.lot_origin == "espp" and item.sale_consideration > 0
+    ]
+    if espp_lots_sold:
+        report.add(
+            "info",
+            "ESPP shares sold — cost basis taken at fair market value",
+            f"{len(espp_lots_sold)} disposal(s) of ESPP shares use the fair "
+            "market value at purchase as the cost, per section 49(2AA), not the "
+            "discounted price you paid.",
+            "If you cross-check against a US 1099-B it will disagree, and it is "
+            "the 1099-B that is wrong for Indian purposes — it reports the US "
+            "basis.",
         )
 
     # -- Holding periods people misjudge -----------------------------------

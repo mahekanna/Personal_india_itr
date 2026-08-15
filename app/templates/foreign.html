@@ -262,6 +262,133 @@
   {% endif %}
 </section>
 
+<!-- ---------------- ESPP ---------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>ESPP purchases</h2>
+    <button class="btn btn-quiet btn-small" type="button" data-repeat-add="espp">
+      + Add a purchase
+    </button>
+  </div>
+  <p class="hint">
+    The discount is salary under section 17(2)(vi) — the gap between the fair
+    market value on the purchase date and what you actually paid. Your own
+    payroll contributions are not deductible against it; they came out of salary
+    that was already taxed.
+  </p>
+  <div class="note note-warning">
+    <strong>The cost basis on sale is the fair market value, not the price you paid</strong>
+    Section 49(2AA) fixes it at the amount already taxed as a perquisite. Your
+    broker's statement and any US 1099-B will show the discounted price, because
+    that is correct for US tax and wrong here. Copying it across taxes the
+    discount twice — once as salary, once as capital gain.
+  </div>
+
+  <div data-repeat="espp">
+    {% for purchase in tr.espp_purchases %}
+    <div class="repeat-row">
+      <div class="repeat-row-head">
+        <strong>Purchase <span data-row-number>{{ loop.index }}</span></strong>
+        <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+      </div>
+      <div class="grid grid-4">
+        <div class="field"><label>Symbol</label>
+          <input type="text" name="espp_{{ loop.index0 }}_symbol" value="{{ purchase.symbol }}"></div>
+        <div class="field"><label>Offering start date</label>
+          <input type="date" name="espp_{{ loop.index0 }}_offering_start_date" value="{{ purchase.offering_start_date or '' }}"></div>
+        <div class="field"><label>Purchase date (allotment)</label>
+          <input type="date" name="espp_{{ loop.index0 }}_purchase_date" value="{{ purchase.purchase_date or '' }}"></div>
+        <div class="field"><label>Shares purchased</label>
+          <input type="number" step="0.0001" name="espp_{{ loop.index0 }}_shares_purchased" value="{{ purchase.shares_purchased }}"></div>
+        <div class="field"><label>Fair market value per share on purchase date</label>
+          <input type="number" step="0.0001" name="espp_{{ loop.index0 }}_fmv_per_share_fx" value="{{ purchase.fmv_per_share_fx }}"></div>
+        <div class="field"><label>Price you actually paid per share</label>
+          <input type="number" step="0.0001" name="espp_{{ loop.index0 }}_price_paid_per_share_fx" value="{{ purchase.price_paid_per_share_fx }}"></div>
+        <div class="field"><label>Price at offering start (lookback)</label>
+          <input type="number" step="0.0001" name="espp_{{ loop.index0 }}_offering_price_fx" value="{{ purchase.offering_price_fx }}"></div>
+        <div class="field"><label>Total payroll contributions</label>
+          <input type="number" step="0.01" name="espp_{{ loop.index0 }}_contributions_fx" value="{{ purchase.contributions_fx }}"></div>
+        <div class="field"><label>Exchange rate override (optional)</label>
+          <input type="number" step="0.0001" name="espp_{{ loop.index0 }}_forex_rate_override" value="{{ purchase.forex_rate_override or '' }}"></div>
+      </div>
+      <div class="field-inline">
+        <input type="checkbox" id="e16_{{ loop.index0 }}" name="espp_{{ loop.index0 }}_included_in_form16"
+               {% if purchase.included_in_form16 %}checked{% endif %}>
+        <label for="e16_{{ loop.index0 }}">
+          Already included in my Form 16 perquisite under section 17(2)
+        </label>
+      </div>
+    </div>
+    {% endfor %}
+
+    <template>
+      <div class="repeat-row">
+        <div class="repeat-row-head">
+          <strong>Purchase <span data-row-number></span></strong>
+          <button class="btn btn-danger btn-small" type="button" data-remove-row>Remove</button>
+        </div>
+        <div class="grid grid-4">
+          <div class="field"><label>Symbol</label>
+            <input type="text" name="espp___INDEX___symbol"></div>
+          <div class="field"><label>Offering start date</label>
+            <input type="date" name="espp___INDEX___offering_start_date"></div>
+          <div class="field"><label>Purchase date (allotment)</label>
+            <input type="date" name="espp___INDEX___purchase_date"></div>
+          <div class="field"><label>Shares purchased</label>
+            <input type="number" step="0.0001" name="espp___INDEX___shares_purchased" value="0"></div>
+          <div class="field"><label>Fair market value per share on purchase date</label>
+            <input type="number" step="0.0001" name="espp___INDEX___fmv_per_share_fx" value="0"></div>
+          <div class="field"><label>Price you actually paid per share</label>
+            <input type="number" step="0.0001" name="espp___INDEX___price_paid_per_share_fx" value="0"></div>
+          <div class="field"><label>Price at offering start (lookback)</label>
+            <input type="number" step="0.0001" name="espp___INDEX___offering_price_fx" value="0"></div>
+          <div class="field"><label>Total payroll contributions</label>
+            <input type="number" step="0.01" name="espp___INDEX___contributions_fx" value="0"></div>
+          <div class="field"><label>Exchange rate override (optional)</label>
+            <input type="number" step="0.0001" name="espp___INDEX___forex_rate_override"></div>
+        </div>
+        <div class="field-inline">
+          <input type="checkbox" name="espp___INDEX___included_in_form16" checked>
+          <label>Already included in my Form 16 perquisite under section 17(2)</label>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  {% if foreign.espp.results %}
+  <h3 style="margin-top:1rem">What that works out to</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Purchase</th><th class="num">Shares</th><th class="num">FMV</th>
+               <th class="num">Paid</th><th class="num">Discount</th>
+               <th class="num">Perquisite</th><th class="num">Cost basis on sale</th></tr></thead>
+    <tbody>
+      {% for item in foreign.espp.results %}
+      <tr>
+        <td>{{ item.purchase.symbol }} — {{ item.purchase.purchase_date }}
+          {% if item.error %}<div class="doc-meta" style="color:var(--danger)">{{ item.error }}</div>{% endif %}
+        </td>
+        <td class="num">{{ item.purchase.shares_purchased }}</td>
+        <td class="num">{{ item.purchase.currency }} {{ item.purchase.fmv_per_share_fx }}</td>
+        <td class="num">{{ item.purchase.currency }} {{ item.purchase.price_paid_per_share_fx }}</td>
+        <td class="num">{{ '%.1f' % (item.effective_discount * 100) }}%</td>
+        <td class="num">{{ item.perquisite_inr | inr }}</td>
+        <td class="num"><strong>{{ item.cost_basis_inr | inr }}</strong>
+          <div class="doc-meta">not {{ item.amount_paid_inr | inr }}</div>
+        </td>
+      </tr>
+      {% endfor %}
+      <tr class="row-total">
+        <td colspan="5">Total ESPP perquisite</td>
+        <td class="num">{{ foreign.espp.total_perquisite_inr | inr }}</td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+
 <!-- ---------------- dividends ---------------- -->
 <section class="card">
   <div class="card-head">
