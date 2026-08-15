@@ -81,8 +81,18 @@ def expand_schedule(
 
     step = _MONTHS_BETWEEN.get(schedule.frequency, 3)
 
-    cliff = non_negative(schedule.cliff_shares)
-    remaining_shares = non_negative(schedule.total_shares - cliff)
+    # A cliff cannot be larger than the grant it is part of. Left unclamped, a
+    # mistyped cliff vests more shares than were ever granted, and every later
+    # figure — perquisite, cost basis, Schedule FA — inherits the error.
+    total_shares = non_negative(schedule.total_shares)
+    cliff = min(non_negative(schedule.cliff_shares), total_shares)
+    if cliff < schedule.cliff_shares:
+        result.warnings.append(
+            f"Grant {schedule.grant_id or schedule.symbol}: the cliff of "
+            f"{schedule.cliff_shares:g} share(s) is larger than the grant of "
+            f"{total_shares:g}, so it has been treated as the whole grant."
+        )
+    remaining_shares = non_negative(total_shares - cliff)
     remaining_tranches = schedule.tranches - (1 if cliff > 0 else 0)
     if remaining_tranches <= 0:
         per_tranche = D(0)
@@ -93,12 +103,14 @@ def expand_schedule(
     for index in range(schedule.tranches):
         vest_date = add_months(schedule.first_vest_date, index * step)
 
-        if index == 0 and cliff > 0:
-            shares = cliff
-        elif index == schedule.tranches - 1:
+        if index == schedule.tranches - 1:
             # The last tranche mops up the rounding, so the tranches always
-            # add back to the grant exactly.
-            shares = non_negative(schedule.total_shares - allocated)
+            # add back to the grant exactly. Tested before the cliff, because a
+            # single-tranche grant with a cliff is both at once, and the whole
+            # grant has to vest on that one date.
+            shares = non_negative(total_shares - allocated)
+        elif index == 0 and cliff > 0:
+            shares = cliff
         else:
             shares = per_tranche
         allocated += shares

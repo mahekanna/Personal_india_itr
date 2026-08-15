@@ -11,7 +11,6 @@ anywhere but ``rules.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 
@@ -56,6 +55,10 @@ class Computation:
     assessment_year: str
 
     salary: Decimal = D(0)
+    # What the salary head actually allowed, for the ITR schedules to report.
+    salary_standard_deduction: Decimal = D(0)
+    salary_exempt_allowed: Decimal = D(0)
+    salary_section_16_other: Decimal = D(0)
     house_property: Decimal = D(0)
     business: Decimal = D(0)
     capital_gains: Decimal = D(0)
@@ -68,6 +71,9 @@ class Computation:
 
     normal_income: Decimal = D(0)
     special_slices: List[SpecialRateSlice] = field(default_factory=list)
+    # Dividend income sitting inside the slab-rate pool. Taxed at slab rates
+    # like any other income, but the surcharge on it is capped at 15%.
+    dividend_in_normal_income: Decimal = D(0)
 
     tax_on_normal_income: Decimal = D(0)
     tax_on_special_income: Decimal = D(0)
@@ -186,6 +192,9 @@ def compute(
     lines.extend(other_result.lines)
 
     comp.salary = salary_result.total
+    comp.salary_standard_deduction = salary_result.standard_deduction
+    comp.salary_exempt_allowed = salary_result.exempt_allowed
+    comp.salary_section_16_other = salary_result.section_16_other
     comp.house_property = hp_result.total
     comp.business = business_result.total
     comp.capital_gains = cg_result.total
@@ -193,6 +202,31 @@ def compute(
 
     for source in (salary_result, hp_result, business_result, cg_result, other_result):
         comp.carried_forward.update(source.carried_forward)
+
+    # A house-property loss may only be set off against income that actually
+    # exists. Section 71(3A) caps the set-off at ₹2,00,000 — heads.py has
+    # already done that — but if the other heads cannot absorb even that much,
+    # the balance is carried forward under section 71B rather than vanishing
+    # into a clamp at zero.
+    if comp.house_property < 0:
+        other_heads = non_negative(
+            comp.salary + comp.business + comp.capital_gains + comp.other_sources
+        )
+        absorbed = min(-comp.house_property, other_heads)
+        unabsorbed = -comp.house_property - absorbed
+        if unabsorbed > 0:
+            comp.carried_forward["house_property"] = (
+                comp.carried_forward.get("house_property", D(0)) + unabsorbed
+            )
+            lines.append(heads.Line(
+                "House property loss not absorbed this year — carried forward",
+                unabsorbed,
+                note="Section 71B: eight assessment years, and only if this "
+                     "return is filed by the due date",
+            ))
+        comp.house_property = -absorbed
+
+    _set_off_brought_forward(tr, comp, lines)
 
     gti = (
         comp.salary + comp.house_property + comp.business
@@ -283,6 +317,9 @@ def compute(
     comp.tax_after_rebate = non_negative(comp.tax_before_rebate - comp.rebate_87a)
 
     # ---- Surcharge ---------------------------------------------------------
+    # The 15% cap covers dividend income as well as the special-rate capital
+    # gains, so the dividend has to be picked out of the slab-rate pool.
+    comp.dividend_in_normal_income = _dividend_in_total_income(tr, normal_income)
     comp.surcharge, comp.surcharge_marginal_relief = _surcharge(
         comp, regime, slabs, slices
     )
@@ -371,6 +408,40 @@ def compute(
 # --------------------------------------------------------------------------
 
 
+def _set_off_brought_forward(
+    tr: TaxReturn, comp: Computation, lines: List[heads.Line]
+) -> None:
+    """Brought-forward house-property and business losses.
+
+    Section 71B lets an unabsorbed house-property loss be carried for eight
+    years, and section 72 a business loss for eight — but each may only be set
+    off against income under **the same head**, never against salary or
+    anything else. Capital losses are handled inside ``heads.py``, where the
+    bucket-by-bucket ordering of section 74 matters.
+    """
+    pairs = (
+        ("house_property_loss", "house_property",
+         "brought-forward house property loss u/s 71B"),
+        ("business_loss", "business", "brought-forward business loss u/s 72"),
+    )
+    for field_name, head, label in pairs:
+        brought = sum(
+            (getattr(loss, field_name) for loss in tr.brought_forward_losses),
+            D(0),
+        )
+        if brought <= 0:
+            continue
+        available = non_negative(getattr(comp, head))
+        used = min(brought, available)
+        if used > 0:
+            setattr(comp, head, getattr(comp, head) - used)
+            lines.append(heads.Line(f"  Less: {label}", -used))
+        left = brought - used
+        if left > 0:
+            key = f"{head}_brought_forward"
+            comp.carried_forward[key] = comp.carried_forward.get(key, D(0)) + left
+
+
 def _rebate_87a(
     comp: Computation, regime: RegimeRules, slices: List[SpecialRateSlice]
 ) -> Decimal:
@@ -403,6 +474,58 @@ def _rebate_87a(
     return min(rebatable_tax, rebate.max_rebate)
 
 
+def _dividend_in_total_income(tr: TaxReturn, normal_income: Decimal) -> Decimal:
+    """Dividend income, domestic and foreign, as it sits in total income.
+
+    Section 57 expenses set against it come off first, and the result cannot
+    exceed the slab-rate pool it is part of.
+    """
+    src = tr.other_sources
+    gross = src.dividend_income + src.foreign_dividend_income
+    if gross <= 0:
+        return D(0)
+    net = non_negative(gross - min(src.section_57_deductions, gross))
+    return min(net, non_negative(normal_income))
+
+
+def _dividend_slab_tax(
+    normal_income: Decimal, dividend: Decimal, slabs
+) -> Decimal:
+    """Tax on the dividend, treating it as the top slice of slab-rate income.
+
+    That is how the department's own utility attributes it, and it is the
+    reading that favours the taxpayer, since the top slice bears the highest
+    marginal rate and so gets the most out of the 15% cap.
+    """
+    dividend = min(non_negative(dividend), non_negative(normal_income))
+    if dividend <= 0:
+        return D(0)
+    return non_negative(
+        tax_on_slabs(normal_income, slabs)
+        - tax_on_slabs(normal_income - dividend, slabs)
+    )
+
+
+def _capped_and_uncapped(
+    comp: Computation, slabs, slices: List[SpecialRateSlice]
+) -> Tuple[Decimal, Decimal]:
+    """Split the tax into the part the 15% cap covers and the part it does not.
+
+    The proviso to Paragraph A of Part I of the First Schedule caps surcharge at
+    15% on income by way of dividend and on income under sections 111A, 112 and
+    112A. Winnings under section 115BB are not on that list, so they bear the
+    full rate — including 25% or 37% — like ordinary income.
+    """
+    capped = sum(
+        (s.tax for s in slices if s.code != "winnings_115bb"), D(0)
+    )
+    capped += _dividend_slab_tax(
+        comp.normal_income, comp.dividend_in_normal_income, slabs
+    )
+    capped = min(capped, non_negative(comp.tax_after_rebate))
+    return capped, non_negative(comp.tax_after_rebate - capped)
+
+
 def _surcharge(
     comp: Computation,
     regime: RegimeRules,
@@ -419,28 +542,29 @@ def _surcharge(
         return D(0), D(0)
 
     cap = regime.surcharge_cap_on_special_income
-    special_rate = min(band.rate, cap)
-
-    # Tax on the capped slice attracts the capped rate; the rest the full rate.
-    capped_tax = sum((s.tax for s in slices), D(0))
-    normal_tax = non_negative(comp.tax_after_rebate - capped_tax)
-
-    surcharge = normal_tax * band.rate + capped_tax * special_rate
+    capped_tax, uncapped_tax = _capped_and_uncapped(comp, slabs, slices)
+    surcharge = uncapped_tax * band.rate + capped_tax * min(band.rate, cap)
 
     # ---- Marginal relief ---------------------------------------------------
     # Tax plus surcharge on the income above the threshold may not exceed the
-    # tax at the threshold plus the whole of the excess income.
+    # tax plus surcharge at the threshold plus the whole of the excess income.
     excess = income - band.threshold
-    tax_at_threshold = _tax_at_income(
-        band.threshold, comp, regime, slabs, slices
+    tax_at_threshold, capped_at_threshold = _tax_at_income(
+        band.threshold, comp, slabs, slices
     )
     previous_band = None
     for candidate in regime.surcharge_bands:
         if candidate.threshold < band.threshold:
             previous_band = candidate
     if previous_band is not None:
-        prev_rate = min(previous_band.rate, cap)
-        tax_at_threshold += tax_at_threshold * prev_rate
+        # The same split applies at the threshold — applying the capped rate to
+        # the whole of the tax there would understate the ceiling and hand out
+        # relief nobody is entitled to.
+        uncapped_at_threshold = non_negative(tax_at_threshold - capped_at_threshold)
+        tax_at_threshold += (
+            uncapped_at_threshold * previous_band.rate
+            + capped_at_threshold * min(previous_band.rate, cap)
+        )
 
     ceiling = tax_at_threshold + excess
     relief = D(0)
@@ -455,15 +579,16 @@ def _surcharge(
 def _tax_at_income(
     income: Decimal,
     comp: Computation,
-    regime: RegimeRules,
     slabs,
     slices: List[SpecialRateSlice],
-) -> Decimal:
-    """Tax (before surcharge and cess) on a hypothetical lower total income.
+) -> Tuple[Decimal, Decimal]:
+    """Tax on a hypothetical lower total income, and how much of it is capped.
 
     Used only for surcharge marginal relief. The shortfall is taken off the
     slab-rate income first and then off the special-rate slices from the
     lowest rate upward, which mirrors how the relief is worked out in practice.
+    Returns the tax before surcharge and cess, and the portion of it that the
+    15% cap covers.
     """
     reduction = non_negative(comp.total_income - income)
     normal = comp.normal_income
@@ -472,12 +597,20 @@ def _tax_at_income(
     reduction -= take_from_normal
 
     tax = tax_on_slabs(normal, slabs)
+    # Dividends are the top slice of the slab-rate pool, so they are the first
+    # thing a reduction in that pool eats into.
+    capped = _dividend_slab_tax(
+        normal, min(comp.dividend_in_normal_income, normal), slabs
+    )
     for slice_ in sorted(slices, key=lambda s: s.rate):
         chargeable = slice_.chargeable
         take = min(reduction, chargeable)
         reduction -= take
-        tax += (chargeable - take) * slice_.rate
-    return tax
+        slice_tax = (chargeable - take) * slice_.rate
+        tax += slice_tax
+        if slice_.code != "winnings_115bb":
+            capped += slice_tax
+    return tax, min(capped, tax)
 
 
 # --------------------------------------------------------------------------
@@ -518,6 +651,14 @@ def build_deferrable(tr: TaxReturn, comp: Computation) -> List[DeferrableItem]:
             continue
         slice_ = special_by_code.get(code)
         for gain in gains:
+            if gain.sale_date is None:
+                # Without a date the proviso cannot be applied. Leaving the
+                # item out puts the tax back in the regular pool, where it is
+                # required in the ordinary 15/45/75/100 fractions. Listing it
+                # with no date would be worse than useless: build_plan reads
+                # that as "arose after 15 March" and waives the interest
+                # entirely.
+                continue
             share = gain.net_gain / total_gain
             if slice_ is not None:
                 tax = slice_.tax * share * gross_up
@@ -536,11 +677,16 @@ def build_deferrable(tr: TaxReturn, comp: Computation) -> List[DeferrableItem]:
     # Each receipt carries its own payment date, which is what the proviso
     # turns on. Indian receipts are already in rupees; foreign ones share out
     # the converted total in proportion to the amounts declared.
+    # A receipt with no payment date never reached the income figures either —
+    # ``compute_dividends`` skips it — so counting it here would apportion the
+    # converted total against income that is not in the return.
     domestic_receipts = [
-        d for d in tr.dividends if d.gross_amount_fx > 0 and d.is_domestic
+        d for d in tr.dividends
+        if d.gross_amount_fx > 0 and d.is_domestic and d.pay_date is not None
     ]
     foreign_receipts = [
-        d for d in tr.dividends if d.gross_amount_fx > 0 and not d.is_domestic
+        d for d in tr.dividends
+        if d.gross_amount_fx > 0 and not d.is_domestic and d.pay_date is not None
     ]
 
     foreign_total_fx = sum((d.gross_amount_fx for d in foreign_receipts), D(0))
@@ -567,37 +713,31 @@ def build_deferrable(tr: TaxReturn, comp: Computation) -> List[DeferrableItem]:
         ))
 
     # Anything left in the head that no dated receipt accounts for — a figure
-    # typed straight in, or lifted from the AIS. Without a date the relief
-    # cannot be granted, so the earliest instalment is assumed, which errs
-    # against the taxpayer rather than understating the liability.
+    # typed straight in, or lifted from the AIS — is deliberately left out.
+    # The proviso turns on when the income arose, and with no date there is
+    # nothing to apply it to; the tax stays in the regular pool and is required
+    # in the ordinary fractions.
     undated = non_negative(tr.other_sources.dividend_income - dated_domestic)
     if undated > 0:
-        items.append(DeferrableItem(
-            kind="dividend",
-            label="Dividend income (no payment date recorded)",
-            arising_on=_fy_start(comp),
-            income=undated,
-            tax=undated * average_rate,
-        ))
+        comp.warnings.append(
+            f"₹{undated:,.0f} of dividend income has no payment date, so the "
+            "proviso to section 234C cannot be applied to it and interest is "
+            "computed on the ordinary instalment fractions. Enter the payment "
+            "dates to claim the relief."
+        )
 
     # ---- Winnings ----------------------------------------------------------
-    winnings_slice = special_by_code.get("winnings_115bb")
-    if winnings_slice is not None:
-        items.append(DeferrableItem(
-            kind="winnings",
-            label="Winnings taxable u/s 115BB",
-            arising_on=None,
-            income=winnings_slice.income,
-            tax=winnings_slice.tax * gross_up,
-        ))
+    # Winnings are covered by the proviso too, but nothing records when they
+    # arose, and an item with no date would be read as arising after 15 March
+    # and waived in full. Left out, the tax simply follows the regular schedule.
+    if special_by_code.get("winnings_115bb") is not None:
+        comp.warnings.append(
+            "Winnings under section 115BB are covered by the proviso to "
+            "section 234C, but this return does not record the date they "
+            "arose, so no relief has been claimed for them."
+        )
 
-    return [item for item in items if item.tax > 0]
-
-
-def _fy_start(comp: Computation) -> date:
-    """First day of the previous year — the most conservative arising date."""
-    start_year = int(comp.assessment_year.split("-")[0]) - 1
-    return date(start_year, 4, 1)
+    return [item for item in items if item.tax > 0 and item.arising_on is not None]
 
 
 # --------------------------------------------------------------------------

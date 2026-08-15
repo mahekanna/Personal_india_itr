@@ -46,8 +46,28 @@ def select_form(tr: TaxReturn) -> FormDecision:
         + tr.other_sources.family_pension
         + tr.other_sources.other_income
     )
+    # House property has to be in here. ITR-1 permits one property, let out or
+    # not, so a single high-rent flat can carry someone past ₹50 lakh on its
+    # own — and leaving it out of the test picked ITR-1 for a return that could
+    # not lawfully go on it.
+    house_property_income = D(0)
+    for prop in tr.house_properties:
+        share = prop.ownership_share if prop.ownership_share > 0 else D(1)
+        if prop.property_type == "SOP":
+            net_annual_value = D(0)
+        else:
+            gross = max(D(0), prop.annual_rent_received - prop.unrealised_rent)
+            net_annual_value = max(
+                D(0), gross * share - prop.municipal_taxes_paid * share
+            )
+        house_property_income += (
+            net_annual_value
+            - net_annual_value * D("0.30")
+            - (prop.interest_24b + prop.pre_construction_interest) * share
+        )
+
     rough_income = (
-        total_salary + other_sources_total
+        total_salary + other_sources_total + house_property_income
         + sum((item.net_gain for item in tr.capital_gains), D(0))
     )
 

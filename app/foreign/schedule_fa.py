@@ -96,10 +96,24 @@ def build_schedule_fa(
             if lot.symbol.upper() == symbol and lot.acquired
             and start <= lot.acquired <= end
         ]
-        held_before = holding.opening_shares + sum(
-            (lot.shares for lot in lots
-             if lot.symbol.upper() == symbol and lot.acquired and lot.acquired < start),
-            D(0),
+        # Shares bought before the calendar year *and still held when it
+        # began*. Disposals from earlier years have to come off: without them
+        # a position closed in 2024 kept reporting itself in calendar 2025,
+        # with an opening balance and a peak value it no longer had.
+        held_before = non_negative(
+            holding.opening_shares
+            + sum(
+                (lot.shares for lot in lots
+                 if lot.symbol.upper() == symbol and lot.acquired
+                 and lot.acquired < start),
+                D(0),
+            )
+            - sum(
+                (sale.shares for sale in sales
+                 if sale.symbol.upper() == symbol and sale.sale_date
+                 and sale.sale_date < start),
+                D(0),
+            )
         )
         sold_in_year = [
             sale for sale in sales

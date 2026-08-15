@@ -502,7 +502,7 @@ def _collect_schedules(form) -> List[VestingSchedule]:
             total_shares=total,
             frequency=_choice(row.get("frequency"), _FREQUENCIES, "quarterly"),
             first_vest_date=_parse_iso_date(row.get("first_vest_date", "")),
-            tranches=int(D(row.get("tranches", 0)) or 16),
+            tranches=_count(row.get("tranches"), 16, 240),
             cliff_shares=D(row.get("cliff_shares", 0)),
             estimated_fmv_per_share_fx=D(row.get("estimated_fmv_per_share_fx", 0)),
             sell_to_cover_fraction=D(row.get("sell_to_cover_fraction", "0.31")),
@@ -576,11 +576,14 @@ def _collect_dividend_schedules(form) -> List[DividendSchedule]:
             currency=_choice(row.get("currency"), _CURRENCIES, "USD"),
             frequency=_choice(row.get("frequency"), _FREQUENCIES, "quarterly"),
             first_pay_date=_parse_iso_date(row.get("first_pay_date", "")),
-            payments=int(D(row.get("payments", 0)) or 4),
+            payments=_count(row.get("payments"), 4, 120),
             dividend_per_share_fx=D(row.get("dividend_per_share_fx", 0)),
-            record_date_lead_days=int(D(row.get("record_date_lead_days", 0)) or 14),
+            record_date_lead_days=_count(row.get("record_date_lead_days"), 14, 90),
             withholding_rate=D(row.get("withholding_rate", "0.25")),
             reinvested=row.get("reinvested") == "on",
+            reinvest_price_per_share_fx=D(
+                row.get("reinvest_price_per_share_fx", 0)
+            ),
             declared_rates=declared,
         ))
     return out
@@ -868,6 +871,23 @@ def _choice(value: Any, allowed, default: str) -> str:
     """
     text = (value or "").strip()
     return text if text in allowed else default
+
+
+def _count(value: Any, default: int, maximum: int) -> int:
+    """A repetition count from a form, bounded on both sides.
+
+    A vesting schedule and a dividend schedule are both expanded by looping
+    this many times. Left unbounded, one absent-minded extra digit turns a
+    sixteen-tranche grant into a sixteen-million-tranche one and takes the
+    machine with it.
+    """
+    try:
+        number = int(D(value or 0))
+    except Exception:  # noqa: BLE001 - anything unreadable falls back
+        return default
+    if number <= 0:
+        return default
+    return min(number, maximum)
 
 
 def _parse_iso_date(value: str) -> Optional[date]:

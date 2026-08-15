@@ -438,6 +438,11 @@
           <input type="number" step="1" name="dsched_{{ loop.index0 }}_record_date_lead_days" value="{{ schedule.record_date_lead_days }}"></div>
         <div class="field"><label>Withholding rate abroad</label>
           <input type="number" step="0.01" name="dsched_{{ loop.index0 }}_withholding_rate" value="{{ schedule.withholding_rate }}"></div>
+        <div class="field"><label>Reinvestment price per share</label>
+          <input type="number" step="0.0001" name="dsched_{{ loop.index0 }}_reinvest_price_per_share_fx" value="{{ schedule.reinvest_price_per_share_fx }}">
+          <span class="hint">Needed only if these payments are reinvested. Each
+            reinvestment buys a new lot with its own 24-month clock, and the
+            shares it buys are held when the next record date comes round.</span></div>
       </div>
       <div class="field">
         <label>Rate actually declared, where it differed — one per line, as
@@ -484,6 +489,8 @@
             <input type="number" step="1" name="dsched___INDEX___record_date_lead_days" value="14"></div>
           <div class="field"><label>Withholding rate abroad</label>
             <input type="number" step="0.01" name="dsched___INDEX___withholding_rate" value="0.25"></div>
+          <div class="field"><label>Reinvestment price per share</label>
+            <input type="number" step="0.0001" name="dsched___INDEX___reinvest_price_per_share_fx" value="0"></div>
         </div>
         <div class="field">
           <label>Rate actually declared, where it differed — one per line, as

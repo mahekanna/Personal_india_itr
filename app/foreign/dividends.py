@@ -124,6 +124,12 @@ def expand_schedules(
     }
     # Extra shares acquired by reinvesting the payments generated here.
     reinvested: Dict[str, Decimal] = {}
+    # Indian dividends paid so far this year, per payer, for the section 194
+    # threshold. TDS starts once a payer crosses ₹10,000 — crediting 10% on a
+    # ₹500 payment claims tax nobody ever deducted.
+    domestic_paid: Dict[str, Decimal] = {}
+    # Schedules that say "reinvested" but carry no price to reinvest at.
+    unpriced_reinvestment: List[str] = []
 
     pending: List[Tuple[date, DividendSchedule, int]] = []
     for schedule in tr.dividend_schedules:
@@ -157,15 +163,25 @@ def expand_schedules(
             continue
 
         gross = held * rate_per_share
-        withheld = (
-            gross * schedule.withholding_rate
-            if schedule.currency.upper() != "INR"
-            else D(0)
-        )
-        tds = (
-            gross * SECTION_194_RATE
-            if schedule.currency.upper() == "INR" else D(0)
-        )
+        is_domestic = schedule.currency.upper() == "INR"
+        withheld = gross * schedule.withholding_rate if not is_domestic else D(0)
+
+        tds = D(0)
+        if is_domestic:
+            # Section 194 bites once the payer has paid more than ₹10,000 in
+            # the year, and then on the whole of the payment that crosses it.
+            running = domestic_paid.get(key, D(0)) + gross
+            domestic_paid[key] = running
+            if running > SECTION_194_THRESHOLD:
+                tds = gross * SECTION_194_RATE
+
+        shares_acquired = D(0)
+        if schedule.reinvested:
+            price = schedule.reinvest_price_per_share_fx
+            if price > 0:
+                shares_acquired = gross / price
+            elif schedule.symbol not in unpriced_reinvestment:
+                unpriced_reinvestment.append(schedule.symbol or "a holding")
 
         receipt = DividendReceipt(
             symbol=schedule.symbol,
@@ -180,14 +196,17 @@ def expand_schedules(
             currency=schedule.currency,
             country_code=schedule.country_code,
             is_reinvested=schedule.reinvested,
+            shares_acquired=shares_acquired,
+            reinvest_price_per_share_fx=schedule.reinvest_price_per_share_fx,
             source_document=f"Dividend schedule — {schedule.symbol}",
         )
 
-        if schedule.reinvested:
-            # Reinvestment buys at whatever the price was; without one on file
-            # the share count cannot be worked out, so only the income is
-            # recorded and the lot is left for the user to complete.
-            reinvested[key] = reinvested.get(key, D(0))
+        # The shares this payment bought are held when the next record date
+        # comes round, so the schedule compounds — which is what actually
+        # happens, and what makes three years of reinvested quarterly dividends
+        # a materially larger number than the naive calculation.
+        if shares_acquired > 0:
+            reinvested[key] = reinvested.get(key, D(0)) + shares_acquired
 
         generated.append(receipt)
 
@@ -202,6 +221,15 @@ def expand_schedules(
                 "than a declared one — replace those with the rate the company "
                 "actually declared before filing."
             )
+    if unpriced_reinvestment:
+        warnings.append(
+            "Payments for " + ", ".join(unpriced_reinvestment[:5])
+            + " are marked as reinvested but no reinvestment price is on file, "
+            "so no new lot was created and the position does not grow between "
+            "payments. Enter the price the plan buys at — every reinvestment "
+            "starts its own 24-month holding period, and the later payments in "
+            "the schedule are sized against a holding that should have grown."
+        )
     return generated, warnings
 
 

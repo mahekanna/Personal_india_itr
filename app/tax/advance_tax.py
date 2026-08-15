@@ -199,11 +199,24 @@ def build_plan(
         return plan
 
     # ---- Split the liability -----------------------------------------------
+    # The proviso turns on *when* the income arose. An item with no date cannot
+    # be placed on the calendar, and treating it as though it arose after
+    # 15 March would waive the interest on it entirely — the opposite of the
+    # conservative answer. It stays in the regular pool instead.
+    dated = [item for item in deferrable if item.arising_on is not None]
+    undated = [item for item in deferrable if item.arising_on is None]
+    if undated:
+        plan.notes.append(
+            "No date is recorded for "
+            + ", ".join(sorted({item.label for item in undated})[:4])
+            + ". The proviso to section 234C cannot be applied without one, so "
+            "the tax on it follows the ordinary 15/45/75/100 schedule."
+        )
+
     # Only tax on income the proviso covers is deferrable. It is capped at the
     # assessed tax, because TDS may already have absorbed part of it.
-    deferrable_tax = min(
-        sum((item.tax for item in deferrable), D(0)), plan.assessed_tax
-    )
+    claimed = sum((item.tax for item in dated), D(0))
+    deferrable_tax = min(claimed, plan.assessed_tax)
     plan.deferrable_tax = deferrable_tax
     plan.regular_tax = non_negative(plan.assessed_tax - deferrable_tax)
 
@@ -211,7 +224,7 @@ def build_plan(
     for instalment in plan.instalments:
         instalment.regular_required = plan.regular_tax * instalment.cumulative_fraction
 
-    for item in deferrable:
+    for item in dated:
         target = instalment_for(item.arising_on, plan.instalments)
         if target is None:
             # Arose after 15 March: the proviso allows payment up to 31 March,
@@ -229,11 +242,7 @@ def build_plan(
     # the conservative reading of "as part of the remaining instalments" — the
     # one that guarantees no interest.
     running = D(0)
-    scale = (
-        deferrable_tax / sum((item.tax for item in deferrable), D(0))
-        if deferrable and sum((item.tax for item in deferrable), D(0)) > 0
-        else D(1)
-    )
+    scale = deferrable_tax / claimed if claimed > 0 else D(1)
     for instalment in plan.instalments:
         running += sum((item.tax for item in instalment.deferrable_items), D(0)) * scale
         instalment.deferrable_required = running

@@ -131,11 +131,14 @@ def _verification(tr: TaxReturn, today: date) -> Dict[str, Any]:
 def _tax_payments(tr: TaxReturn) -> Dict[str, Any]:
     """Challan-level detail for advance tax and self-assessment tax."""
     rows = []
-    for index, payment in enumerate(tr.taxes_paid.payments, start=1):
+    for payment in tr.taxes_paid.payments:
         if payment.kind not in ("advance_tax", "self_assessment"):
             continue
         rows.append({
-            "SrNo": index,
+            # Numbered over the challans themselves. Counting across every
+            # payment left gaps in the sequence wherever a TDS row sat between
+            # two challans, and the schema wants it unbroken.
+            "SrNo": len(rows) + 1,
             "BSRCode": payment.bsr_code,
             "DateDep": (payment.payment_date or date.today()).isoformat(),
             "SrlNoOfChaln": int(payment.challan_serial)
@@ -198,12 +201,13 @@ def build_itr1(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
     today = date.today()
 
     gross_salary = sum((s.gross_salary for s in tr.salaries), D(0))
-    exempt_allowances = sum((s.total_exempt for s in tr.salaries), D(0))
-    professional_tax = sum((s.professional_tax for s in tr.salaries), D(0))
-    regime = ay.regimes[comp.regime]
-    standard_deduction = min(
-        regime.standard_deduction_salary, gross_salary
-    ) if tr.salaries else D(0)
+    # What the engine allowed, not what was claimed. The new regime withdraws
+    # some section 10 exemptions and the whole of section 16(iii), and
+    # recomputing them here produced rows that did not add up to the head total
+    # sitting a few keys below them.
+    exempt_allowances = comp.salary_exempt_allowed
+    professional_tax = comp.salary_section_16_other
+    standard_deduction = comp.salary_standard_deduction
 
     house = tr.house_properties[0] if tr.house_properties else None
     other = tr.other_sources
@@ -332,12 +336,13 @@ def build_itr2(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
     today = date.today()
 
     gross_salary = sum((s.gross_salary for s in tr.salaries), D(0))
-    exempt_allowances = sum((s.total_exempt for s in tr.salaries), D(0))
-    professional_tax = sum((s.professional_tax for s in tr.salaries), D(0))
-    regime = ay.regimes[comp.regime]
-    standard_deduction = min(
-        regime.standard_deduction_salary, gross_salary
-    ) if tr.salaries else D(0)
+    # What the engine allowed, not what was claimed. The new regime withdraws
+    # some section 10 exemptions and the whole of section 16(iii), and
+    # recomputing them here produced rows that did not add up to the head total
+    # sitting a few keys below them.
+    exempt_allowances = comp.salary_exempt_allowed
+    professional_tax = comp.salary_section_16_other
+    standard_deduction = comp.salary_standard_deduction
 
     schedule_s = {
         "TotalGrossSalary": _i(gross_salary),
@@ -638,8 +643,11 @@ def _schedule_cg(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
                 )),
                 "CapgainonAssets": _i(_slice_income(comp, "stcg_111a")),
             }],
+            # Slab-rate short-term gains never become a Schedule SI slice, so
+            # asking _slice_income for them always returned nil and the total
+            # silently dropped every foreign and non-STT short-term gain.
             "TotalSTCG": _i(
-                _slice_income(comp, "stcg_111a") + _slice_income(comp, "stcg_slab")
+                _slice_income(comp, "stcg_111a") + _slab_rate_gains(tr, comp)
             ),
         },
         "LongTermCapGain23": {
@@ -651,11 +659,15 @@ def _schedule_cg(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
                 ),
                 "ScripWiseDetail": rows,
             },
+            # ltcg_112_foreign belongs here too — Part B-TI already counts it,
+            # and leaving it out made Schedule CG disagree with the total it
+            # feeds.
             "TotalLTCG": _i(
                 _slice_income(comp, "ltcg_112a")
                 + _slice_income(comp, "ltcg_112_property")
                 + _slice_income(comp, "ltcg_112_property_indexed")
                 + _slice_income(comp, "ltcg_112_other")
+                + _slice_income(comp, "ltcg_112_foreign")
             ),
         },
         "SumOfCGIncm": _i(comp.capital_gains),
@@ -695,7 +707,13 @@ def _schedule_os(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
             "IntrstFrmSavingBank": _i(other.savings_bank_interest),
             "IntrstFrmTermDeposit": _i(other.fixed_deposit_interest),
             "IntrstFrmIncmTaxRefund": _i(other.income_tax_refund_interest),
-            "DividendGross": _i(other.dividend_income),
+            # Both lines are dividend income under the same head. Reporting
+            # only the Indian one leaves the itemised rows short of
+            # GrossIncChargeable by the whole foreign amount, which is exactly
+            # the mismatch the portal's own validation looks for.
+            "DividendGross": _i(
+                other.dividend_income + other.foreign_dividend_income
+            ),
             "FamilyPension": _i(other.family_pension),
             "AnyOtherIncome": _i(other.other_income + other.gifts_taxable),
             "GrossIncChargeable": _i(comp.other_sources),

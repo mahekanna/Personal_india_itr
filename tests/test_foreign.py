@@ -157,7 +157,14 @@ def test_sell_to_cover_reaches_the_capital_gains_schedule():
         (date(2024, 1, 15), date(2025, 6, 15), "stcg_slab_foreign"),   # 17 mo
         (date(2024, 1, 15), date(2025, 12, 15), "stcg_slab_foreign"),  # 23 mo
         (date(2024, 1, 15), date(2026, 1, 14), "stcg_slab_foreign"),   # 23 mo
-        (date(2024, 1, 15), date(2026, 1, 15), "ltcg_112_foreign"),    # 24 mo
+        # Section 2(42A) makes an asset short term where it is held for "not
+        # more than" 24 months, so 24 months to the day is still short term.
+        # It has to run a day past the second anniversary.
+        (date(2024, 1, 15), date(2026, 1, 15), "stcg_slab_foreign"),   # exactly 24
+        (date(2024, 1, 15), date(2026, 1, 16), "ltcg_112_foreign"),    # 24 mo + 1d
+        # A February anniversary has to clamp to the end of a short month.
+        (date(2024, 2, 29), date(2026, 2, 28), "stcg_slab_foreign"),
+        (date(2024, 2, 29), date(2026, 3, 1), "ltcg_112_foreign"),
         (date(2023, 1, 15), date(2026, 1, 15), "ltcg_112_foreign"),    # 36 mo
     ],
 )

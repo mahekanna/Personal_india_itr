@@ -96,9 +96,14 @@ def compute_deductions(
         "preventive check-up up to ₹5,000 is inside these limits")
 
     # -- 80DD / 80DDB / 80U: disability and treatment -------------------------
+    # Sections 80DD and 80U are flat deductions: the statute allows ₹75,000 (or
+    # ₹1,25,000 for a severe disability) "in respect of" the expenditure, not
+    # the expenditure itself. Someone who spent ₹10,000 still gets the whole
+    # ₹75,000, so the claim is a yes/no, not a number — capping it at what was
+    # spent is the one reading the section does not permit.
     dd_cap = limits["80DD_severe" if ded.s80dd_severe else "80DD_normal"]
     add("80DD", "Maintenance of a dependant with a disability",
-        ded.s80dd, min(ded.s80dd, dd_cap) if ded.s80dd else D(0),
+        ded.s80dd, dd_cap if ded.s80dd > 0 else D(0),
         "A flat deduction — the actual expenditure does not change it")
 
     ddb_cap = limits["80DDB_senior" if age_band in ("senior", "super_senior")
@@ -108,7 +113,7 @@ def compute_deductions(
 
     u_cap = limits["80U_severe" if ded.s80u_severe else "80U_normal"]
     add("80U", "Deduction for a person with a disability",
-        ded.s80u, min(ded.s80u, u_cap) if ded.s80u else D(0))
+        ded.s80u, u_cap if ded.s80u > 0 else D(0))
 
     # -- Interest deductions --------------------------------------------------
     add("80E", "Interest on an education loan", ded.s80e, ded.s80e,
@@ -119,21 +124,6 @@ def compute_deductions(
         min(ded.s80eea, limits["80EEA"]))
     add("80EEB", "Interest on an electric-vehicle loan", ded.s80eeb,
         min(ded.s80eeb, limits["80EEB"]))
-
-    # -- 80G: donations -------------------------------------------------------
-    g_result, g_note = _section_80g(ded, gross_total_income, lines)
-    add("80G", "Donations to approved funds and institutions",
-        ded.s80g_100pct_no_limit + ded.s80g_50pct_no_limit
-        + ded.s80g_100pct_with_limit + ded.s80g_50pct_with_limit,
-        g_result, g_note)
-
-    # -- 80GG: rent paid when no HRA is received ------------------------------
-    if ded.s80gg or ded.rent_paid_annual:
-        gg = _section_80gg(ded, gross_total_income)
-        add("80GG", "Rent paid where no house-rent allowance is received",
-            ded.rent_paid_annual or ded.s80gg, gg,
-            "Least of ₹5,000 a month, 25% of adjusted total income, "
-            "and rent paid less 10% of adjusted total income")
 
     add("80GGA", "Donations for scientific research or rural development",
         ded.s80gga, ded.s80gga)
@@ -155,6 +145,29 @@ def compute_deductions(
     add("80JJAA", "Employment of new workmen", ded.s80jjaa, ded.s80jjaa)
     add("80CCH", "Contribution to the Agnipath Scheme", ded.s80cch, ded.s80cch)
 
+    # -- 80G and 80GG, last, because their ceilings depend on the others ------
+    # Both are measured against "adjusted gross total income": gross total
+    # income less long-term gains, less short-term gains under section 111A,
+    # and less every other Chapter VI-A deduction. The engine has already taken
+    # the special-rate income out of what it passes in; the deductions computed
+    # above have to come out here.
+    adjusted = non_negative(
+        gross_total_income - sum((line.allowed for line in lines), D(0))
+    )
+
+    g_result, g_note = _section_80g(ded, adjusted)
+    add("80G", "Donations to approved funds and institutions",
+        ded.s80g_100pct_no_limit + ded.s80g_50pct_no_limit
+        + ded.s80g_100pct_with_limit + ded.s80g_50pct_with_limit,
+        g_result, g_note)
+
+    if ded.s80gg or ded.rent_paid_annual:
+        gg = _section_80gg(ded, adjusted)
+        add("80GG", "Rent paid where no house-rent allowance is received",
+            ded.rent_paid_annual or ded.s80gg, gg,
+            "Least of ₹5,000 a month, 25% of adjusted total income, "
+            "and rent paid less 10% of adjusted total income")
+
     total = sum((line.allowed for line in lines), D(0))
 
     # Section 80A(2): the aggregate cannot exceed gross total income. Nor may
@@ -172,7 +185,7 @@ def compute_deductions(
 
 
 def _section_80g(
-    ded: Deductions, gross_total_income: Decimal, _lines: List[DeductionLine]
+    ded: Deductions, adjusted_gross_total_income: Decimal
 ) -> Tuple[Decimal, str]:
     """Donations, honouring the 10%-of-adjusted-GTI qualifying limit."""
     unrestricted = ded.s80g_100pct_no_limit + (ded.s80g_50pct_no_limit * D("0.5"))
@@ -180,7 +193,7 @@ def _section_80g(
     if restricted_claim <= 0:
         return unrestricted, "100% or 50% of the donation, as notified"
 
-    qualifying_limit = non_negative(gross_total_income) * D("0.10")
+    qualifying_limit = non_negative(adjusted_gross_total_income) * D("0.10")
     eligible = min(restricted_claim, qualifying_limit)
     # Give the 100% category the benefit of the limit first.
     hundred = min(ded.s80g_100pct_with_limit, eligible)
@@ -192,11 +205,11 @@ def _section_80g(
     )
 
 
-def _section_80gg(ded: Deductions, gross_total_income: Decimal) -> Decimal:
+def _section_80gg(ded: Deductions, adjusted_total_income: Decimal) -> Decimal:
     rent = ded.rent_paid_annual or ded.s80gg
     if rent <= 0:
         return D(0)
-    adjusted = non_negative(gross_total_income)
+    adjusted = non_negative(adjusted_total_income)
     return non_negative(
         min(
             D("60000"),                       # ₹5,000 a month

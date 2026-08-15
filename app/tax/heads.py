@@ -61,7 +61,7 @@ class HeadResult:
 # --------------------------------------------------------------------------
 
 
-def compute_salary(tr: TaxReturn, regime: RegimeRules) -> HeadResult:
+def compute_salary(tr: TaxReturn, regime: RegimeRules) -> "SalaryResult":
     lines: List[Line] = []
     gross_total = D(0)
     exempt_total = D(0)
@@ -116,7 +116,12 @@ def compute_salary(tr: TaxReturn, regime: RegimeRules) -> HeadResult:
     total = non_negative(net_before_std - standard_deduction)
     lines.append(Line("Income chargeable under the head Salaries", total,
                       is_subtotal=True))
-    return HeadResult(total=total, lines=lines)
+    return SalaryResult(
+        total=total, lines=lines,
+        standard_deduction=standard_deduction,
+        exempt_allowed=exempt_total,
+        section_16_other=section_16_total,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -258,6 +263,21 @@ def compute_business(tr: TaxReturn) -> HeadResult:
 # --------------------------------------------------------------------------
 # Capital gains
 # --------------------------------------------------------------------------
+
+
+@dataclass
+class SalaryResult(HeadResult):
+    """What the salary head allowed, as opposed to what was claimed.
+
+    The ITR JSON has to report these figures, and recomputing them there gave
+    a different answer whenever the new regime withdrew an exemption — the
+    itemised rows then failed to add up to the head total the same file
+    declared.
+    """
+
+    standard_deduction: Decimal = D(0)
+    exempt_allowed: Decimal = D(0)
+    section_16_other: Decimal = D(0)
 
 
 @dataclass

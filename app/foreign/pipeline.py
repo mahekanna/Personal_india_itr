@@ -138,6 +138,20 @@ def apply_foreign(
         )
         for sale in working.foreign_sales if sale.shares > 0
     ]
+    # The vest lot covers every share that vested, including the ones the broker
+    # sold the same day to fund withholding. Those are gone by the next record
+    # date, so leaving them out here would size roughly a third more dividend
+    # than was ever paid.
+    prior_sales.extend(
+        rsu_module.SaleEvent(
+            symbol=vest.symbol, sale_date=vest.vest_date,
+            shares=vest.shares_sold_to_cover,
+            price_per_share_fx=vest.sale_price_per_share_fx,
+            currency=vest.currency,
+        )
+        for vest in working.rsu_vests
+        if vest.shares_sold_to_cover > 0 and vest.vest_date
+    )
 
     if working.dividend_schedules:
         from ..tax.rules import get_ay
@@ -272,11 +286,14 @@ def _add_perquisite_to_salary(tr: TaxReturn, amount: Decimal) -> None:
 def _warn_about_rates(
     tr: TaxReturn, forex: ForexTable, result: ForeignResult
 ) -> None:
+    # Paired with the currency each figure is actually in — a euro holding
+    # needs a euro rate, and checking every date against the dollar table said
+    # nothing was missing when everything was.
     dates = (
-        [v.vest_date for v in tr.rsu_vests]
-        + [p.purchase_date for p in tr.espp_purchases]
-        + [d.pay_date for d in tr.dividends]
-        + [s.sale_date for s in tr.foreign_sales]
+        [(v.vest_date, v.currency) for v in tr.rsu_vests]
+        + [(p.purchase_date, p.currency) for p in tr.espp_purchases]
+        + [(d.pay_date, d.currency) for d in tr.dividends if not d.is_domestic]
+        + [(s.sale_date, s.currency) for s in tr.foreign_sales]
     )
     missing = forex.months_needing_a_rate(dates)
     if missing:

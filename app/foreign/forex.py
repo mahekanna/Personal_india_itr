@@ -87,9 +87,14 @@ class ForexTable:
         """The TT buying rate quoted for the last day of ``month``."""
         currency = currency.upper()
         user = self._overrides.get(month, {}).get(currency)
-        if user not in (None, "", 0):
-            return Rate(currency, month, D(user), provisional=False,
-                        note="Entered by you")
+        # A blank, a zero or anything unreadable is not an override. Taking a
+        # zero at face value would convert every foreign figure to nil and look
+        # like the income simply was not there.
+        if user not in (None, ""):
+            value = D(user)
+            if value > 0:
+                return Rate(currency, month, value, provisional=False,
+                            note="Entered by you")
 
         entry = self._builtin.get(month, {}).get(currency)
         if entry is None:
@@ -121,39 +126,54 @@ class ForexTable:
         rate = self.rate_for(when, currency, head)
         return D(amount) * rate.value, rate
 
-    def months_needing_a_rate(
-        self, dates, currency: str = "USD"
-    ) -> list[str]:
+    # Both of the reports below accept either bare dates or ``(date,
+    # currency)`` pairs. Assuming US dollars for every date meant a euro or
+    # sterling holding was never reported as needing a rate at all — the
+    # lookup then failed silently at computation time instead.
+
+    def months_needing_a_rate(self, entries, currency: str = "USD") -> list[str]:
         """Which months the user still has to supply a rate for."""
         missing = []
-        for when in dates:
-            if when is None:
-                continue
+        for when, ccy in _pairs(entries, currency):
             month = preceding_month(when)
+            label = month if ccy == "USD" else f"{month} ({ccy})"
             try:
-                self.rate_for_month(month, currency)
+                self.rate_for_month(month, ccy)
             except RateUnavailable:
-                if month not in missing:
-                    missing.append(month)
+                if label not in missing:
+                    missing.append(label)
         return sorted(missing)
 
-    def provisional_months(self, dates, currency: str = "USD") -> list[str]:
+    def provisional_months(self, entries, currency: str = "USD") -> list[str]:
         """Which months fell back on a built-in rate and want checking."""
         flagged = []
-        for when in dates:
-            if when is None:
-                continue
+        for when, ccy in _pairs(entries, currency):
             month = preceding_month(when)
+            label = month if ccy == "USD" else f"{month} ({ccy})"
             try:
-                rate = self.rate_for_month(month, currency)
+                rate = self.rate_for_month(month, ccy)
             except RateUnavailable:
                 continue
-            if rate.provisional and month not in flagged:
-                flagged.append(month)
+            if rate.provisional and label not in flagged:
+                flagged.append(label)
         return sorted(flagged)
 
 
 # --------------------------------------------------------------------------
+
+
+def _pairs(entries, default_currency: str):
+    """Normalise a mixed list of dates and ``(date, currency)`` pairs."""
+    for entry in entries:
+        if entry is None:
+            continue
+        if isinstance(entry, tuple):
+            when, currency = entry
+        else:
+            when, currency = entry, default_currency
+        if when is None:
+            continue
+        yield when, (currency or default_currency).upper()
 
 
 def preceding_month(when: date) -> str:

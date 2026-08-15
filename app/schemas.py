@@ -433,6 +433,10 @@ class DividendSchedule(_Base):
     record_date_lead_days: int = 14
     # Whether payments are reinvested rather than paid out.
     reinvested: bool = False
+    # Price per share the reinvestment buys at. Without it a reinvested payment
+    # cannot grow the position, and every later payment in the schedule is
+    # sized against a holding that stopped growing.
+    reinvest_price_per_share_fx: Money = D(0)
     withholding_rate: Money = D("0.25")
 
 

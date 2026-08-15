@@ -139,7 +139,7 @@ def compute_vests(tr: TaxReturn, forex: ForexTable) -> ForeignEquityResult:
             ))
 
     result.provisional_rate_months = forex.provisional_months(
-        [v.vest_date for v in tr.rsu_vests]
+        [(v.vest_date, v.currency) for v in tr.rsu_vests]
     )
     _warn_about_form16(tr, result)
     return result
@@ -262,18 +262,31 @@ class SaleEvent:
     source_document: str = ""
 
 
+def _months_later(start: date, months: int) -> date:
+    """The same day of the month, ``months`` on, clamped to a short month."""
+    import calendar
+
+    index = start.month - 1 + months
+    year = start.year + index // 12
+    month = index % 12 + 1
+    return date(year, month, min(start.day, calendar.monthrange(year, month)[1]))
+
+
 def classify_foreign_gain(
     purchase: Optional[date], sale: Optional[date]
 ) -> str:
-    """Long term only after 24 months — no securities transaction tax abroad."""
+    """Long term only after 24 months — no securities transaction tax abroad.
+
+    Section 2(42A) makes an asset short term where it is held for "not more
+    than" twenty-four months, so twenty-four months to the day is still short
+    term: the holding has to run a day past the second anniversary. On a large
+    tranche that single day is the difference between 12.5% and slab rates.
+    """
     if purchase is None or sale is None:
         return "stcg_slab_foreign"
-    months = (sale.year - purchase.year) * 12 + (sale.month - purchase.month)
-    if sale.day < purchase.day:
-        months -= 1
+    anniversary = _months_later(purchase, LONG_TERM_MONTHS_FOREIGN)
     return (
-        "ltcg_112_foreign" if months >= LONG_TERM_MONTHS_FOREIGN
-        else "stcg_slab_foreign"
+        "ltcg_112_foreign" if sale > anniversary else "stcg_slab_foreign"
     )
 
 

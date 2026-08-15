@@ -26,7 +26,7 @@ from .foreign.vesting import expand_all, summarise_by_quarter
 from .money import D, non_negative, rupees
 from .schemas import TaxReturn
 from .tax.advance_tax import AdvanceTaxPlan, DeferrableItem, build_plan
-from .tax.engine import Computation, build_deferrable, compare_regimes, compute
+from .tax.engine import Computation, build_deferrable, compute
 from .tax.rules import AssessmentYear, age_band, get_ay
 
 # The challan a personal advance-tax payment goes on.
@@ -87,11 +87,18 @@ def build_planner(
 
     # ---- Compute the year as it will end up --------------------------------
     prepared, foreign = apply_foreign(tr, include_projected=include_projections)
-    regime = tr.regime_choice if tr.regime_choice in ("new", "old") else None
-    if regime is None:
-        comparison = compare_regimes(tr)
-        regime = comparison.recommended
-    comp = compute(prepared, regime, ay, foreign=foreign)
+    if tr.regime_choice in ("new", "old"):
+        comp = compute(prepared, tr.regime_choice, ay, foreign=foreign)
+    else:
+        # Compare on the *projected* year, not the banked one. Picking the
+        # regime from what has happened so far and then planning instalments
+        # against a year that includes four more vests can choose the wrong
+        # regime, and the instalments follow the choice.
+        new = compute(prepared, "new", ay, foreign=foreign)
+        old = compute(prepared, "old", ay, foreign=foreign)
+        new_cost = new.total_tax_liability + new.interest.total_interest
+        old_cost = old.total_tax_liability + old.interest.total_interest
+        comp = new if new_cost <= old_cost else old
 
     # ---- What is projected rather than banked ------------------------------
     projected = [v for v in prepared.rsu_vests if v.is_projected]
@@ -212,7 +219,8 @@ def _add_planner_notes(
             f"Advance tax paid so far is ₹{plan.paid_to_date:,.0f}. Reaching "
             f"₹{rupees(ninety):,.0f} — 90% of the assessed tax — by 31 March "
             "avoids section 234B altogether, which runs at 1% a month on the "
-            "whole shortfall from 1 April 2026 until the return is filed."
+            f"whole shortfall from 1 April {ay.fy_end.year} until the return "
+            "is filed."
         )
 
     last_instalment = plan.instalments[-1]
