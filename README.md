@@ -301,9 +301,21 @@ return; the other is the same year still in progress, seen from December, where
 salary TDS covers the salary and the gains fall to advance tax. Nothing in it is
 real: no genuine PAN, TAN, IFSC or account number appears anywhere.
 
-`demo/capture.py` drives the running application with a real browser and writes
-a screenshot of each screen to `demo/screens/`, which is how the images in this
-file were made and a quick way to eyeball the interface after a change.
+Two scripts read the running application rather than describing it:
+
+- `demo/capture.py` drives it with a real browser and writes a screenshot of
+  each screen to `demo/screens/` — how the images below were made, and a quick
+  way to eyeball the interface after a change.
+- `demo/build_walkthrough.py` bundles every screen's actual HTML, with the
+  stylesheet inlined, into one browsable file. Not a mock-up: only the
+  navigation between screens is added, and the forms are left in place and made
+  inert.
+
+```bash
+python run.py --port 8790 --no-browser &
+python demo/build_walkthrough.py --port 8790 \
+    --filing <return-id> --planning <return-id>
+```
 
 ![Regime comparison](demo/screens/06-compare.jpg)
 

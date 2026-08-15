@@ -30,6 +30,7 @@ htmlcov/
 # and the generated JSON/PDF are not.
 demo/screens/*.png
 demo/output/
+demo/walkthrough.html
 
 # Editors and OS
 .vscode/
