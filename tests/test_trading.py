@@ -368,7 +368,7 @@ def test_any_trading_segment_forces_itr3():
     decision = select_form(tr)
 
     assert decision.form == "ITR-3"
-    assert decision.supported is False
+    assert decision.supported is True
     assert any("43(5)" in reason for reason in decision.reasons)
 
 

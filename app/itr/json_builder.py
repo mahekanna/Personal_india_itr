@@ -12,6 +12,15 @@ assessment year, and the revisions are not always documented before the utility
 ships. The structure below follows the published schema, but the honest test is
 whether the offline utility imports the file without complaint. That test is
 one click, and ``README.md`` explains how to run it.
+
+**No file this module produces has ever been imported into the utility.** The
+element names are written from the published schema and from what these forms
+ask for, and the arithmetic inside them is tested; the names themselves are not.
+ITR-3 in particular has the largest surface and the least corroboration —
+Schedule BP, Schedule OI and the no-books block of Part A-P&L are the ones to
+check first. A rejected import is a naming problem, not a tax problem: the
+computation sheet and the filing pack carry the same figures and are what to
+key in if the JSON is refused.
 """
 
 from __future__ import annotations
@@ -21,7 +30,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from ..money import D, rupees
+from ..money import D, non_negative, rupees
 from ..schemas import TaxReturn
 from ..tax.engine import Computation
 from ..tax.rules import get_ay
@@ -64,12 +73,18 @@ def _creation_info(today: date) -> Dict[str, Any]:
     }
 
 
-def _filing_section(tr: TaxReturn, ay) -> int:
-    """Section 139 sub-clause the return is filed under."""
+def _filing_section(tr: TaxReturn, ay, audit: bool = False) -> int:
+    """Section 139 sub-clause the return is filed under.
+
+    An audit case has until 31 October, so a September filing is on time under
+    139(1) rather than belated under 139(4). Measuring it against the non-audit
+    date declared a punctual return late.
+    """
     filing_date = tr.filing_date or date.today()
     if tr.is_revised:
         return 17          # 139(5) revised
-    if filing_date > ay.due_date_non_audit:
+    due = ay.due_date_audit if audit else ay.due_date_non_audit
+    if filing_date > due:
         return 12          # 139(4) belated
     return 11              # 139(1) on or before the due date
 
@@ -296,7 +311,7 @@ def build_itr1(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
                 },
                 "PersonalInfo": _personal_info(tr),
                 "FilingStatus": {
-                    "ReturnFileSec": _filing_section(tr, ay),
+                    "ReturnFileSec": _filing_section(tr, ay, comp.audit_required),
                     "NewTaxRegime": "Y" if comp.regime == "new" else "N",
                     "SeventhProvisio139": "N",
                 },
@@ -475,7 +490,7 @@ def build_itr2(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
                 "PartA_GEN1": {
                     "PersonalInfo": _personal_info(tr),
                     "FilingStatus": {
-                        "ReturnFileSec": _filing_section(tr, ay),
+                        "ReturnFileSec": _filing_section(tr, ay, comp.audit_required),
                         "NewTaxRegime": "Y" if comp.regime == "new" else "N",
                         "SeventhProvisio139": "N",
                     },
@@ -484,6 +499,8 @@ def build_itr2(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
                 "ScheduleHP": _schedule_hp(tr, comp),
                 "ScheduleCGFor23": schedule_cg,
                 "ScheduleOS": _schedule_os(tr, comp),
+                "ScheduleCYLA": _schedule_cyla(comp),
+                "ScheduleCFL": _schedule_cfl(tr, comp),
                 "ScheduleVIA": _chapter_via_block(comp),
                 "ScheduleSI": schedule_si,
                 **_foreign_schedules(tr, comp),
@@ -794,6 +811,8 @@ def build(tr: TaxReturn, comp: Computation, form: str) -> Dict[str, Any]:
         return build_itr1(tr, comp)
     if form == "ITR-2":
         return build_itr2(tr, comp)
+    if form == "ITR-3":
+        return build_itr3(tr, comp)
     raise ValueError(
         f"{form} JSON generation is not implemented. Use the computation sheet "
         "and the filing pack with the department's offline utility."
@@ -802,3 +821,380 @@ def build(tr: TaxReturn, comp: Computation, form: str) -> Dict[str, Any]:
 
 def to_json_bytes(payload: Dict[str, Any]) -> bytes:
     return json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
+
+
+# --------------------------------------------------------------------------
+# Loss schedules — CYLA, BFLA and CFL
+# --------------------------------------------------------------------------
+#
+# These describe how a loss moved: CYLA the current-year inter-head set-off
+# under section 71, BFLA the brought-forward set-off under sections 71B, 72
+# and 73, and CFL what is left to carry. ITR-2 needs them as much as ITR-3
+# does, and neither had them.
+
+
+def _schedule_cyla(comp: Computation) -> Dict[str, Any]:
+    """Current-year loss adjustment — Schedule CYLA.
+
+    ``head_before_setoff`` is the head as computed; the post-set-off value is
+    what reconciles into Part B-TI. The difference is what this schedule is
+    for.
+    """
+    before = comp.head_before_setoff or {}
+    house_loss = comp.loss_set_off.get("house_property", D(0))
+    business_loss = comp.loss_set_off.get("business", D(0))
+
+    def row(head: str, income: Decimal) -> Dict[str, Any]:
+        return {
+            "IncCurYr": _i(income),
+            "HPlossCurYrSetoff": 0,
+            "BusLossOthThanSpecLossCurYrSetoff": 0,
+            "IncAfterSetoff": _i(income),
+        }
+
+    return {
+        "Salary": row("salary", non_negative(before.get("salary", comp.salary))),
+        "HP": row("house_property",
+                  non_negative(before.get("house_property", D(0)))),
+        "Business": row("business",
+                        non_negative(before.get("business", D(0)))),
+        "STCG": row("stcg", D(0)),
+        "LTCG": row("ltcg", D(0)),
+        "OtherSrc": row("other_sources",
+                        non_negative(before.get("other_sources", D(0)))),
+        "TotalLossSetOff": {
+            "TotHPlossCurYrSetoff": _i(house_loss),
+            "TotBusLossOthThanSpecLossCurYrSetoff": _i(business_loss),
+        },
+        "LossRemainSetOff": {
+            "TotHPlossCurYrSetoff": _i(
+                comp.carried_forward.get("house_property", D(0))
+            ),
+            "TotBusLossOthThanSpecLossCurYrSetoff": _i(
+                comp.carried_forward.get("business", D(0))
+            ),
+        },
+    }
+
+
+def _schedule_cfl(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
+    """Losses to be carried forward — Schedule CFL.
+
+    Only survives if the return is filed by the due date, which is why the
+    filing pack says so in its own words too.
+    """
+    forward = comp.carried_forward
+    return {
+        "LossCFFromCurrYr": {
+            "CurrAssmntYear": comp.assessment_year,
+            "HouseProperty": _i(forward.get("house_property", D(0))),
+            "TotalBusLossCF": _i(forward.get("business", D(0))),
+            "TotalSpecLossCF": _i(forward.get("speculative_business", D(0))),
+            "TotalSTCGPTILossCF": _i(forward.get("stcl", D(0))),
+            "TotalLTCGPTILossCF": _i(forward.get("ltcl", D(0))),
+        },
+        "TotalOfBFLossesEarlierYrs": {
+            "LossSummaryDetail": {
+                "TotalHPPTILossCF": _i(
+                    sum((l.house_property_loss for l in tr.brought_forward_losses),
+                        D(0))
+                ),
+                "TotalBusLossCF": _i(
+                    sum((l.business_loss for l in tr.brought_forward_losses), D(0))
+                ),
+                "TotalSpecLossCF": _i(
+                    sum((l.speculative_loss for l in tr.brought_forward_losses),
+                        D(0))
+                ),
+                "TotalSTCGPTILossCF": _i(
+                    sum((l.stcl for l in tr.brought_forward_losses), D(0))
+                ),
+                "TotalLTCGPTILossCF": _i(
+                    sum((l.ltcl for l in tr.brought_forward_losses), D(0))
+                ),
+            }
+        },
+    }
+
+
+# --------------------------------------------------------------------------
+# ITR-3
+# --------------------------------------------------------------------------
+
+
+def _no_account_case(comp: Computation) -> Dict[str, Any]:
+    """Part A-P&L, the 'regular books are not maintained' block.
+
+    A trader running an F&O book off a broker's statement does not keep books
+    of account in the section 44AA sense, and the form has a short section for
+    exactly that: turnover, gross profit, expenses and net profit, per business.
+    """
+    trading = comp.trading
+    if trading is None or not trading.has_anything:
+        return {}
+
+    non_speculative = [s for s in trading.segments if not s.is_speculative]
+    speculative = [s for s in trading.segments if s.is_speculative]
+
+    def block(segments) -> Dict[str, Any]:
+        gross = sum((s.gross_profit for s in segments), D(0))
+        expenses = sum((s.expenses for s in segments), D(0))
+        return {
+            "GrossReceipts": _i(sum((s.turnover for s in segments), D(0))),
+            "GrossProfit": _i(gross),
+            "Expenses": _i(expenses),
+            "NetProfit": _i(gross - expenses),
+        }
+
+    out: Dict[str, Any] = {}
+    if non_speculative:
+        out["NoAccountCase"] = block(non_speculative)
+    if speculative:
+        out["NoAccountCaseSpeculative"] = block(speculative)
+    return out
+
+
+def _schedule_bp(comp: Computation) -> Dict[str, Any]:
+    """Schedule BP — profits and gains, with speculation kept separate.
+
+    Part A of the schedule is business other than speculative; part B is
+    speculative business. Section 73 is the reason they cannot be one number:
+    a speculation loss never leaves its own ring, so it is reported and carried
+    on its own line rather than netted into the business total.
+    """
+    trading = comp.trading
+    non_speculative = D(0)
+    speculative = D(0)
+    turnover = D(0)
+    if trading is not None:
+        non_speculative = trading.non_speculative_income
+        speculative = trading.speculative_income
+        turnover = trading.total_turnover
+
+    # A speculative loss is held back out of the head, so only a profit adds.
+    speculative_in_head = speculative if speculative > 0 else D(0)
+
+    return {
+        "BusinessIncOthThanSpecAndSpecifiedBus": {
+            "ProfBusGain": {
+                "NetProfitLossFrmBusProf": _i(non_speculative),
+            },
+            "IncomeOthThanSpecAndSpecifiedBus": _i(non_speculative),
+        },
+        "IncChargeableUnderProfessionOrBusiness": _i(comp.business),
+        "SpecBusinessInc": {
+            "NetProfitLossFrmSpecBus": _i(speculative),
+            "IncomeFrmSpecBus": _i(speculative_in_head),
+            "SpecBusLossCF": _i(
+                comp.carried_forward.get("speculative_business", D(0))
+            ),
+        },
+        "TotTurnoverForAudit": _i(turnover),
+    }
+
+
+def _schedule_oi(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
+    """Schedule OI — other information.
+
+    Nearly all of it is optional where no audit is required, which is the usual
+    case for an individual trader. What is not optional is the method of
+    accounting and the audit answer itself.
+    """
+    return {
+        "MethodOfAccounting": "1",           # 1 = mercantile
+        "ChgInMethodOfAccounting": "N",
+        "MethodOfValuation": {
+            "OpeningStock": "1", "ClosingStock": "1",
+        },
+        "AuditRequired": "Y" if comp.audit_required else "N",
+    }
+
+
+def build_itr3(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
+    """ITR-3 — the form for anyone with business or professional income.
+
+    F&O, intraday, currency and commodity trading all land here. The schedules
+    that carry the trading figures are BP, OI and the no-books block of
+    Part A-P&L; the rest is shared with ITR-2, including Schedule FA, FSI and
+    TR1 for the US side.
+    """
+    ay = get_ay(tr.assessment_year)
+    versions = SCHEMA_VERSIONS[tr.assessment_year]
+    today = date.today()
+
+    gross_salary = sum((s.gross_salary for s in tr.salaries), D(0))
+    exempt_allowances = comp.salary_exempt_allowed
+    professional_tax = comp.salary_section_16_other
+    standard_deduction = comp.salary_standard_deduction
+
+    schedule_s = {
+        "TotalGrossSalary": _i(gross_salary),
+        "AllwncExemptUs10": _i(exempt_allowances),
+        "NetSalary": _i(gross_salary - exempt_allowances),
+        "DeductionUnderSection16": _i(standard_deduction + professional_tax),
+        "DeductionUs16ia": _i(standard_deduction),
+        "TotIncUnderHeadSalaries": _i(
+            comp.head_before_setoff.get("salary", comp.salary)
+        ),
+        "Salaries": [
+            {
+                "NameOfEmployer": s.employer_name,
+                "TANofEmployer": s.employer_tan,
+                "NatureOfEmployment": s.employer_category,
+                "Salarys": {
+                    "GrossSalary": _i(s.gross_salary),
+                    "Salary": _i(s.salary_17_1),
+                    "PerquisitesValue": _i(s.perquisites_17_2),
+                    "ProfitsInLieuOfSalary": _i(s.profits_in_lieu_17_3),
+                },
+            }
+            for s in tr.salaries
+        ],
+    }
+
+    part_b_ti = {
+        "Salaries": _i(comp.salary),
+        "IncomeFromHP": _i(comp.house_property),
+        "ProfBusGain": {
+            "ProfGainNoSpeculative": _i(comp.business),
+            "ProfGainSpeculative": _i(
+                max(D(0), getattr(comp.trading, "speculative_income", D(0)))
+                if comp.trading is not None else D(0)
+            ),
+            "TotProfBusGain": _i(comp.business),
+        },
+        "CapGain": {
+            "TotalCapGains": _i(comp.capital_gains),
+            "ShortTerm": {
+                "ShortTerm15Per": _i(_slice_income(comp, "stcg_111a")),
+                "ShortTermAppRate": _i(_slab_rate_gains(tr, comp)),
+                "TotalShortTerm": _i(
+                    _slice_income(comp, "stcg_111a") + _slab_rate_gains(tr, comp)
+                ),
+            },
+            "LongTerm": {
+                "LongTerm10Per": _i(_slice_income(comp, "ltcg_112a")),
+                "LongTerm20Per": _i(
+                    _slice_income(comp, "ltcg_112_property")
+                    + _slice_income(comp, "ltcg_112_property_indexed")
+                    + _slice_income(comp, "ltcg_112_other")
+                    + _slice_income(comp, "ltcg_112_foreign")
+                ),
+                "TotalLongTerm": _i(
+                    _slice_income(comp, "ltcg_112a")
+                    + _slice_income(comp, "ltcg_112_property")
+                    + _slice_income(comp, "ltcg_112_property_indexed")
+                    + _slice_income(comp, "ltcg_112_other")
+                    + _slice_income(comp, "ltcg_112_foreign")
+                ),
+            },
+        },
+        "IncFromOS": {"TotIncFromOS": _i(comp.other_sources)},
+        "GrossTotalIncome": _i(comp.gross_total_income),
+        "DeductionsUnderScheduleVIA": _i(comp.deductions_total),
+        "TotalIncome": _i(comp.total_income_rounded),
+        "AggregateIncome": _i(comp.total_income_rounded),
+    }
+
+    part_b_tti = {
+        "ComputationOfTaxLiability": {
+            "TaxPayableOnTI": {
+                "TaxAtNormalRatesOnAggrInc": _i(comp.tax_on_normal_income),
+                "TaxAtSpecialRates": _i(comp.tax_on_special_income),
+                "RebateOnAgriInc": 0,
+                "TaxPayableOnTotInc": _i(comp.tax_before_rebate),
+            },
+            "Rebate87A": _i(comp.rebate_87a),
+            "TaxPayableOnRebate": _i(comp.tax_after_rebate),
+            "SurchargeOnAboveCrore": _i(comp.surcharge),
+            "MarginalReliefOnSur": _i(comp.surcharge_marginal_relief),
+            "EducationCess": _i(comp.cess),
+            "GrossTaxLiability": _i(
+                comp.tax_after_rebate + comp.surcharge + comp.cess
+            ),
+            "TaxRelief": {
+                "Section89": _i(comp.relief_89),
+                "Section90": _i(comp.relief_90_91),
+                "Section91": 0,
+                "TotTaxRelief": _i(comp.relief_89 + comp.relief_90_91),
+            },
+            "NetTaxLiability": _i(comp.total_tax_liability),
+            "IntrstPay": {
+                "IntrstPayUs234A": _i(comp.interest.section_234a),
+                "IntrstPayUs234B": _i(comp.interest.section_234b),
+                "IntrstPayUs234C": _i(comp.interest.section_234c),
+                "LateFilingFee234F": _i(comp.interest.section_234f),
+                "TotalIntrstPay": _i(comp.interest.total),
+            },
+            "AggregateTaxInterestLiability": _i(
+                comp.total_tax_liability + comp.interest.total
+            ),
+        },
+        "TaxPaid": {
+            "TaxesPaid": {
+                "TDS": _i(comp.tds),
+                "TCS": _i(comp.tcs),
+                "AdvanceTax": _i(comp.advance_tax),
+                "SelfAssessmentTax": _i(comp.self_assessment_tax),
+                "TotalTaxesPaid": _i(comp.total_taxes_paid),
+            },
+            "BalTaxPayable": _i(comp.net_payable),
+        },
+        "Refund": {
+            "RefundDue": _i(comp.refund_due),
+            **_bank_details(tr),
+        },
+    }
+
+    filing_status: Dict[str, Any] = {
+        "ReturnFileSec": _filing_section(tr, ay, audit=comp.audit_required),
+        "NewTaxRegime": "Y" if comp.regime == "new" else "N",
+        "SeventhProvisio139": "N",
+    }
+    # Opting out of section 115BAC with business income is done on Form 10-IEA,
+    # not on the return, and the acknowledgement number goes here.
+    if comp.regime == "old":
+        filing_status["ItrFilingDueDate"] = (
+            ay.due_date_audit if comp.audit_required else ay.due_date_non_audit
+        ).isoformat()
+        if tr.business.form_10iea_ack:
+            filing_status["Form10IEAAckNo"] = tr.business.form_10iea_ack
+
+    payload = {
+        "ITR": {
+            "ITR3": {
+                "CreationInfo": _creation_info(today),
+                "Form_ITR3": {
+                    "FormName": "ITR-3",
+                    "Description": "For individuals and HUFs having income "
+                                   "from profits and gains of business or "
+                                   "profession",
+                    "AssessmentYear": versions["AssessmentYear"],
+                    "SchemaVer": versions["SchemaVer"],
+                    "FormVer": versions["FormVer"],
+                },
+                "PartA_GEN1": {
+                    "PersonalInfo": _personal_info(tr),
+                    "FilingStatus": filing_status,
+                },
+                "PartA_PL": _no_account_case(comp),
+                "ScheduleS": schedule_s,
+                "ScheduleHP": _schedule_hp(tr, comp),
+                "ScheduleBP": _schedule_bp(comp),
+                "ScheduleOI": _schedule_oi(tr, comp),
+                "ScheduleCGFor23": _schedule_cg(tr, comp),
+                "ScheduleOS": _schedule_os(tr, comp),
+                "ScheduleCYLA": _schedule_cyla(comp),
+                "ScheduleCFL": _schedule_cfl(tr, comp),
+                "ScheduleVIA": _chapter_via_block(comp),
+                "ScheduleSI": _schedule_si(comp),
+                **_foreign_schedules(tr, comp),
+                "PartB-TI": part_b_ti,
+                "PartB_TTI": part_b_tti,
+                "Verification": _verification(tr, today),
+                **_tds_schedules(tr),
+                **_tax_payments(tr),
+            }
+        }
+    }
+    return payload

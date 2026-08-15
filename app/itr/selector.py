@@ -158,7 +158,7 @@ def select_form(tr: TaxReturn) -> FormDecision:
         return decision
 
     if tr.trading_segments:
-        decision = FormDecision(form="ITR-3", supported=False)
+        decision = FormDecision(form="ITR-3", supported=True)
         segments = ", ".join(
             sorted({SEGMENT_NAMES.get(s.segment, s.segment)
                     for s in tr.trading_segments})
@@ -173,10 +173,11 @@ def select_form(tr: TaxReturn) -> FormDecision:
         )
         decision.disqualifications = blocks
         decision.note = (
-            "ITR-3 JSON generation is not built yet. The computation, the "
-            "turnover and audit determination, and the filing pack are all "
-            "produced in full — enter the figures in the department's offline "
-            "utility, or use the computation sheet with your accountant."
+            "Schedules BP, OI, CYLA and CFL carry the trading figures, and the "
+            "no-books block of Part A-P&L carries the turnover. Import the JSON "
+            "into the department's offline utility and check every schedule "
+            "before you submit — this file has never been validated against "
+            "the published schema."
         )
         return decision
 
