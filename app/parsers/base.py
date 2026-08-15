@@ -61,6 +61,10 @@ class Extraction:
     foreign_sales: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     raw_text_excerpt: str = ""
+    # Set when the file is an encrypted PDF none of the candidate passwords
+    # opened. The batch parser retries these once the PAN has been found in
+    # some other document, which is the usual way it becomes known.
+    needs_password: bool = False
 
     def add(self, path: str, label: str, value: Any, *,
             confidence: float = 0.8, evidence: str = "") -> None:

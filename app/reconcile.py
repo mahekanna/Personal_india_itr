@@ -276,7 +276,14 @@ def _check_foreign(tr: TaxReturn, report: ReconciliationReport) -> None:
         )
 
     # -- Form 67 ----------------------------------------------------------
-    withheld = sum((d.foreign_tax_withheld_fx for d in tr.dividends), D(0))
+    # Tax withheld on dividends is the usual source, but a credit can also come
+    # from a payment entered by hand or from tax withheld on a disposal, and
+    # Rule 128(9) applies to the credit however it arose.
+    withheld = (
+        sum((d.foreign_tax_withheld_fx for d in tr.dividends), D(0))
+        + sum((p.tax_paid_inr for p in tr.foreign_taxes), D(0))
+        + sum((c.foreign_tax_paid for c in tr.capital_gains), D(0))
+    )
     if withheld > 0 and not tr.foreign_settings.form67_filed:
         report.add(
             "error",
@@ -357,7 +364,11 @@ def _check_foreign(tr: TaxReturn, report: ReconciliationReport) -> None:
         item for item in tr.capital_gains
         if item.category == "stcg_slab_foreign"
         and item.purchase_date and item.sale_date
-        and 18 <= _months_between(item.purchase_date, item.sale_date) < 24
+        # Inclusive of 24: an asset held for exactly twenty-four months is
+        # still short term under section 2(42A), and that is the case most
+        # worth telling someone about — one more day would have halved the
+        # rate.
+        and 18 <= _months_between(item.purchase_date, item.sale_date) <= 24
     ]
     if near_miss:
         report.add(

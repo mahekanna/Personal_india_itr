@@ -135,6 +135,10 @@ def new_return(
     label: str = Form(""),
     session: Session = Depends(db_session),
 ):
+    # The income page has validated this since a probe found it, but the page
+    # that *creates* the return did not — so a bad year here still built a
+    # return that rendered four pages and then 500ed on the fifth.
+    assessment_year = _choice(assessment_year, ASSESSMENT_YEARS, CURRENT_AY)
     record = get_or_create_return(session, None, assessment_year)
     record.label = label or f"Return for AY {assessment_year}"
     session.commit()
@@ -660,7 +664,10 @@ def choose_regime(
 ):
     record = _load(session, return_id)
     tr = record.load()
-    tr.regime_choice = regime_choice
+    # The one place a form value still reached the model unchecked. Since
+    # assignment is validated, an unrecognised regime raised here rather than
+    # being quietly stored — a 500 on the page that picks the regime.
+    tr.regime_choice = _choice(regime_choice, ("auto", "new", "old"), "auto")
     record.save(tr)
     session.commit()
     return RedirectResponse(f"/returns/{return_id}/file", status_code=303)
@@ -807,8 +814,15 @@ def export_data(return_id: str, session: Session = Depends(db_session)):
 @app.post("/api/quick-compare")
 async def quick_compare(request: Request):
     """A standalone what-if calculator, used by the home page widget."""
-    body = await request.json()
-    tr = TaxReturn(assessment_year=body.get("assessment_year", CURRENT_AY))
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - a malformed body is a 400, not a 500
+        return JSONResponse({"error": "Send a JSON body."}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Send a JSON object."}, status_code=400)
+    tr = TaxReturn(assessment_year=_choice(
+        body.get("assessment_year"), ASSESSMENT_YEARS, CURRENT_AY
+    ))
     tr.filing_date = _parse_iso_date(body.get("filing_date", "")) or date.today()
     salary = D(body.get("salary", 0))
     if salary:

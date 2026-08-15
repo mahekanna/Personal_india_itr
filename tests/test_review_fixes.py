@@ -446,3 +446,131 @@ def test_the_salary_schedule_adds_up_under_the_new_regime():
         schedule_s["NetSalary"] - schedule_s["DeductionUnderSection16"]
         == schedule_s["TotIncUnderHeadSalaries"]
     )
+
+
+# --------------------------------------------------------------------------
+# Routes that took a form value without checking it
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def client():
+    import os
+    import tempfile
+
+    os.environ.setdefault("ITR_DATA_DIR", tempfile.mkdtemp(prefix="itr-review-"))
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+ALL_PAGES = ("documents", "review", "income", "foreign", "compare", "file",
+             "planner")
+
+
+def _new(client, assessment_year: str = "2026-27") -> str:
+    response = client.post("/returns/new",
+                           data={"assessment_year": assessment_year},
+                           follow_redirects=False)
+    return response.headers["location"].split("/")[2]
+
+
+def test_an_unrecognised_regime_on_the_compare_page_is_not_a_500(client):
+    """Assignment is validated, so this was the one route still handing a raw
+    form string to the model — on the page whose only job is to set it."""
+    return_id = _new(client)
+    response = client.post(f"/returns/{return_id}/compare",
+                           data={"regime_choice": "martian"},
+                           follow_redirects=False)
+    assert response.status_code == 303
+    for page in ALL_PAGES:
+        assert client.get(f"/returns/{return_id}/{page}").status_code == 200
+
+
+def test_creating_a_return_in_an_unsupported_year_falls_back(client):
+    """The income page has checked this for a while; the page that creates the
+    return did not, so four pages rendered and the fifth blew up."""
+    return_id = _new(client, "1899-00")
+    for page in ALL_PAGES:
+        assert client.get(f"/returns/{return_id}/{page}").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ('{"assessment_year":"1899-00","salary":1500000}', 200),
+        ('{"salary":"NaN"}', 200),
+        ('{"salary":1200000,"ltcg_112a":"1e999"}', 200),
+        ("not json at all", 400),
+        ("[1,2,3]", 400),
+    ],
+)
+def test_the_quick_compare_api_answers_or_refuses_but_never_500s(
+    client, body, expected
+):
+    response = client.post("/api/quick-compare", content=body,
+                           headers={"content-type": "application/json"})
+    assert response.status_code == expected
+
+
+# --------------------------------------------------------------------------
+# Batch parsing
+# --------------------------------------------------------------------------
+
+
+def test_a_password_protected_file_is_retried_once_the_pan_is_known():
+    """parse_many documented two passes and made one, so whether the AIS
+    parsed depended on whether the Form 16 happened to be uploaded first."""
+    from app.parsers import registry
+    from app.parsers.base import Extraction, Fact, PasswordRequired
+
+    seen: list = []
+
+    def fake_parse(raw, filename, *, pan="", date_of_birth=None, forced_type=""):
+        seen.append((filename, pan))
+        if filename == "form16.pdf":
+            out = Extraction(document_type="form16", source_filename=filename)
+            out.facts.append(Fact(path="taxpayer.pan", label="PAN",
+                                  value="ABCDE1234F"))
+            return out
+        if not pan:
+            raise PasswordRequired("locked")
+        return Extraction(document_type="ais", source_filename=filename)
+
+    original = registry.parse_document
+    registry.parse_document = fake_parse
+    try:
+        # The locked file comes first, before anything has revealed the PAN.
+        results = registry.parse_many(
+            [("ais.pdf", b"x"), ("form16.pdf", b"y")]
+        )
+    finally:
+        registry.parse_document = original
+
+    assert [r.document_type for r in results] == ["ais", "form16"]
+    assert ("ais.pdf", "ABCDE1234F") in seen
+
+
+def test_a_file_that_stays_locked_keeps_its_original_message():
+    from app.parsers import registry
+    from app.parsers.base import Extraction, Fact, PasswordRequired
+
+    def fake_parse(raw, filename, *, pan="", date_of_birth=None, forced_type=""):
+        if filename == "form16.pdf":
+            out = Extraction(document_type="form16", source_filename=filename)
+            out.facts.append(Fact(path="taxpayer.pan", label="PAN",
+                                  value="ABCDE1234F"))
+            return out
+        raise PasswordRequired("This PDF is password protected.")
+
+    original = registry.parse_document
+    registry.parse_document = fake_parse
+    try:
+        results = registry.parse_many([("ais.pdf", b"x"), ("form16.pdf", b"y")])
+    finally:
+        registry.parse_document = original
+
+    assert results[0].needs_password is True
+    assert any("password protected" in w for w in results[0].warnings)

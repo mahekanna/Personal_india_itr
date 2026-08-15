@@ -11,7 +11,7 @@ from datetime import date
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import ais, bank, broker, form16, form26as, us_equity
-from .base import (
+from .base import (  # noqa: F401 - PasswordRequired is re-raised below
     Extraction,
     PasswordRequired,
     candidate_passwords,
@@ -82,6 +82,7 @@ def parse_document(
     except PasswordRequired as exc:
         out = Extraction(document_type="unknown", source_filename=filename)
         out.warnings.append(str(exc))
+        out.needs_password = True
         return out
 
     if len(text.strip()) < 40:
@@ -184,22 +185,48 @@ def parse_many(
     date_of_birth: Optional[date] = None,
 ) -> List[Extraction]:
     """Parse a whole batch, tolerating failures on individual files."""
-    results: List[Extraction] = []
     known_pan = pan
-    # Two passes: the first may discover the PAN, which the second needs to
-    # decrypt the password-protected AIS and 26AS.
-    for name, raw in files:
+
+    def attempt(name: str, raw: bytes) -> Extraction:
         try:
-            extraction = parse_document(
+            return parse_document(
                 raw, name, pan=known_pan, date_of_birth=date_of_birth
             )
+        except PasswordRequired as exc:
+            # ``parse_document`` normally catches this itself, but it can also
+            # come from a table pass or a parser further in. Either way the
+            # file is worth retrying once the PAN is known, so the marker has
+            # to survive.
+            locked = Extraction(document_type="unknown", source_filename=name)
+            locked.warnings.append(str(exc))
+            locked.needs_password = True
+            return locked
         except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
-            extraction = Extraction(document_type="unknown", source_filename=name)
-            extraction.warnings.append(f"{name} could not be read: {exc}")
+            failed = Extraction(document_type="unknown", source_filename=name)
+            failed.warnings.append(f"{name} could not be read: {exc}")
+            return failed
+
+    results: List[Extraction] = []
+    for name, raw in files:
+        extraction = attempt(name, raw)
         results.append(extraction)
         if not known_pan:
             for fact in extraction.facts:
                 if fact.path == "taxpayer.pan":
                     known_pan = str(fact.value)
                     break
+
+    # Second pass. The AIS and Form 26AS are encrypted with the PAN, and the
+    # PAN is usually only discovered part way through the batch — from a Form
+    # 16 further down the list. Anything that failed for want of a password
+    # before that discovery gets one more go with it. Without this the order
+    # the files happened to be uploaded in decided whether they parsed.
+    if known_pan and known_pan != pan:
+        for index, (name, raw) in enumerate(files):
+            if not results[index].needs_password:
+                continue
+            retried = attempt(name, raw)
+            if not retried.needs_password:
+                results[index] = retried
+
     return results
