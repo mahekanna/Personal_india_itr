@@ -88,6 +88,8 @@ class Computation:
     total_tax_liability: Decimal = D(0)
 
     interest: InterestResult = field(default_factory=InterestResult)
+    trading: Optional[object] = None       # tax.trading.TradingResult
+    audit_required: bool = False
     ftc: Optional[object] = None          # foreign.ftc.FTCResult when relevant
     # Income the proviso to section 234C excuses from the earlier instalments.
     deferrable: List[DeferrableItem] = field(default_factory=list)
@@ -104,6 +106,12 @@ class Computation:
     lines: List[heads.Line] = field(default_factory=list)
     deduction_detail: Optional[DeductionResult] = None
     carried_forward: Dict[str, Decimal] = field(default_factory=dict)
+    # The heads as each was computed, before any inter-head set-off under
+    # section 71. The schedules describe the head; Part B-TI reconciles the
+    # total after set-off. Both figures are real and they are not the same.
+    head_before_setoff: Dict[str, Decimal] = field(default_factory=dict)
+    # How much of each head's loss the other heads actually absorbed.
+    loss_set_off: Dict[str, Decimal] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
     @property
@@ -191,6 +199,14 @@ def compute(
     lines.extend(cg_result.lines)
     lines.extend(other_result.lines)
 
+    comp.trading = getattr(business_result, "trading", None)
+    # Trading income is business income however the taxpayer thinks of it, and
+    # it changes the due date, the form and the regime mechanics.
+    has_business = bool(
+        tr.has_business_income
+        or tr.business.scheme != "none"
+        or (comp.trading is not None and comp.trading.has_anything)
+    )
     comp.salary = salary_result.total
     comp.salary_standard_deduction = salary_result.standard_deduction
     comp.salary_exempt_allowed = salary_result.exempt_allowed
@@ -203,17 +219,28 @@ def compute(
     for source in (salary_result, hp_result, business_result, cg_result, other_result):
         comp.carried_forward.update(source.carried_forward)
 
+    comp.head_before_setoff = {
+        "salary": comp.salary,
+        "house_property": comp.house_property,
+        "business": comp.business,
+        "capital_gains": comp.capital_gains,
+        "other_sources": comp.other_sources,
+    }
+
     # A house-property loss may only be set off against income that actually
     # exists. Section 71(3A) caps the set-off at ₹2,00,000 — heads.py has
     # already done that — but if the other heads cannot absorb even that much,
     # the balance is carried forward under section 71B rather than vanishing
     # into a clamp at zero.
     if comp.house_property < 0:
-        other_heads = non_negative(
-            comp.salary + comp.business + comp.capital_gains + comp.other_sources
+        loss = -comp.house_property
+        comp.house_property = D(0)
+        unabsorbed = _absorb_loss(
+            loss, comp, cg_result, lines,
+            allow_salary=True, label="house property loss u/s 71",
         )
-        absorbed = min(-comp.house_property, other_heads)
-        unabsorbed = -comp.house_property - absorbed
+        absorbed = loss - unabsorbed
+        comp.loss_set_off["house_property"] = absorbed
         if unabsorbed > 0:
             comp.carried_forward["house_property"] = (
                 comp.carried_forward.get("house_property", D(0)) + unabsorbed
@@ -224,9 +251,10 @@ def compute(
                 note="Section 71B: eight assessment years, and only if this "
                      "return is filed by the due date",
             ))
-        comp.house_property = -absorbed
-
-    _set_off_brought_forward(tr, comp, lines)
+    # Statutory order: current-year inter-head set-off under section 71 first,
+    # then the brought-forward losses under sections 71B, 72 and 73.
+    _set_off_business_loss(comp, lines, cg_result)
+    _set_off_brought_forward(tr, comp, lines, business_result)
 
     gti = (
         comp.salary + comp.house_property + comp.business
@@ -373,6 +401,13 @@ def compute(
         if p.kind == "advance_tax"
     ]
     comp.deferrable = build_deferrable(tr, comp)
+    # An audit case files by 31 October rather than 31 July, which moves both
+    # the section 234A interest and the section 234F fee. It was hardcoded to
+    # False, which charged a trader for being late when they were not.
+    comp.audit_required = bool(
+        tr.business.books_audited
+        or (comp.trading is not None and comp.trading.audit_required)
+    )
     comp.interest = compute_interest_and_fee(
         ay,
         total_tax_liability=comp.total_tax_liability,
@@ -381,8 +416,8 @@ def compute(
         self_assessment_paid=comp.self_assessment_tax,
         total_income=comp.total_income,
         filing_date=tr.filing_date,
-        is_audit_case=False,
-        has_only_pension_or_no_business=not tr.has_business_income,
+        is_audit_case=comp.audit_required,
+        has_only_pension_or_no_business=not has_business,
         is_senior_citizen=band_key in ("senior", "super_senior"),
         deferrable=comp.deferrable,
     )
@@ -408,15 +443,129 @@ def compute(
 # --------------------------------------------------------------------------
 
 
-def _set_off_brought_forward(
-    tr: TaxReturn, comp: Computation, lines: List[heads.Line]
+def _absorb_loss(
+    loss: Decimal,
+    comp: Computation,
+    cg_result,
+    lines: List[heads.Line],
+    *,
+    allow_salary: bool,
+    label: str,
+) -> Decimal:
+    """Set a loss against the other heads, and say which income it consumed.
+
+    Netting the loss into gross total income and leaving the heads alone is not
+    good enough. The special-rate capital-gains slices are built from the
+    buckets, so a loss that netted away in the total would leave a 12.5% slice
+    still standing and quietly take the relief out of slab-rate income instead
+    — which, where section 71(2A) bars the loss from salary, is exactly the
+    set-off the statute refuses.
+
+    Order of consumption is the taxpayer's prerogative, and the choice made
+    here is to spend the loss on the most expensive income first: slab-rate
+    income, then the special-rate buckets from the highest rate down. Sheltering
+    a 12.5% gain while leaving 30% income exposed would be giving relief away.
+
+    Returns what could not be absorbed.
+    """
+    remaining = loss
+
+    slab_pools = ["other_sources", "house_property"]
+    if allow_salary:
+        slab_pools.insert(0, "salary")
+    for attribute in slab_pools:
+        if remaining <= 0:
+            break
+        available = non_negative(getattr(comp, attribute))
+        used = min(remaining, available)
+        if used > 0:
+            setattr(comp, attribute, getattr(comp, attribute) - used)
+            remaining -= used
+            lines.append(heads.Line(
+                f"  Less: {label} set off against "
+                f"{attribute.replace('_', ' ')}", -used,
+            ))
+
+    # Capital gains, slab-rate buckets before the concessional ones.
+    if cg_result is not None:
+        buckets = sorted(
+            (b for b in cg_result.buckets.values() if b.taxable > 0),
+            key=lambda b: (b.rate is not None, -(b.rate or D(0))),
+        )
+        for bucket in buckets:
+            if remaining <= 0:
+                break
+            used = min(remaining, bucket.taxable)
+            bucket.taxable -= used
+            bucket.losses_set_off += used
+            remaining -= used
+            lines.append(heads.Line(
+                f"  Less: {label} set off against {bucket.label}", -used,
+            ))
+        comp.capital_gains = sum(
+            (b.taxable for b in cg_result.buckets.values() if b.taxable > 0),
+            D(0),
+        )
+
+    return remaining
+
+
+def _set_off_business_loss(
+    comp: Computation, lines: List[heads.Line], cg_result
 ) -> None:
-    """Brought-forward house-property and business losses.
+    """Section 71(2A): a business loss meets every head except salary.
+
+    An F&O year that ends in the red can be set against capital gains and
+    against other sources — including the gain on a US share sale — but never
+    against the salary the RSU vested into. What none of those absorb is
+    carried forward eight years under section 72.
+
+    Speculation never reaches here: section 73 keeps an intraday loss inside
+    its own ring, and ``compute_business`` has already held it back.
+    """
+    if comp.business >= 0:
+        return
+
+    loss = -comp.business
+    # The head itself contributes nothing further: what it absorbed has been
+    # taken off the other heads, and what it did not is carried forward.
+    comp.business = D(0)
+    unabsorbed = _absorb_loss(
+        loss, comp, cg_result, lines,
+        allow_salary=False, label="business loss u/s 71",
+    )
+    comp.loss_set_off["business"] = loss - unabsorbed
+
+    if unabsorbed > 0:
+        comp.carried_forward["business"] = (
+            comp.carried_forward.get("business", D(0)) + unabsorbed
+        )
+        lines.append(heads.Line(
+            "Business loss carried forward u/s 72", unabsorbed,
+            note="Eight assessment years, and only if this return is filed by "
+                 "the due date",
+        ))
+        if comp.salary > 0:
+            comp.warnings.append(
+                f"₹{unabsorbed:,.0f} of business loss could not be set off this "
+                "year. Section 71(2A) does not permit it against salary, so it "
+                "is carried forward for eight years under section 72 — but only "
+                "if this return is filed by the due date. A belated return "
+                "forfeits the carry-forward entirely."
+            )
+
+
+def _set_off_brought_forward(
+    tr: TaxReturn, comp: Computation, lines: List[heads.Line],
+    business_result=None,
+) -> None:
+    """Brought-forward house-property, business and speculation losses.
 
     Section 71B lets an unabsorbed house-property loss be carried for eight
-    years, and section 72 a business loss for eight — but each may only be set
-    off against income under **the same head**, never against salary or
-    anything else. Capital losses are handled inside ``heads.py``, where the
+    years and section 72 a business loss for eight — but each may only be set
+    off against income under **the same head**. Section 73 is stricter still: a
+    speculation loss meets speculative income and nothing else, and it lapses
+    after four years. Capital losses are handled inside ``heads.py``, where the
     bucket-by-bucket ordering of section 74 matters.
     """
     pairs = (
@@ -440,6 +589,40 @@ def _set_off_brought_forward(
         if left > 0:
             key = f"{head}_brought_forward"
             comp.carried_forward[key] = comp.carried_forward.get(key, D(0)) + left
+
+    # ---- Section 73: speculation, and only speculation ---------------------
+    brought_speculative = sum(
+        (loss.speculative_loss for loss in tr.brought_forward_losses), D(0)
+    )
+    if brought_speculative <= 0:
+        return
+
+    # It can only meet this year's speculative *profit*, which is the part of
+    # the business head that came from intraday trading. Setting it against the
+    # F&O profit sitting in the same head would be unlawful.
+    speculative_profit = non_negative(
+        getattr(business_result, "speculative", D(0))
+    )
+    used = min(brought_speculative, speculative_profit, non_negative(comp.business))
+    if used > 0:
+        comp.business -= used
+        lines.append(heads.Line(
+            "  Less: brought-forward speculation loss u/s 73", -used,
+            note="Set off only against this year's speculative income",
+        ))
+    left = brought_speculative - used
+    if left > 0:
+        comp.carried_forward["speculative_brought_forward"] = (
+            comp.carried_forward.get("speculative_brought_forward", D(0)) + left
+        )
+        if speculative_profit <= 0:
+            comp.warnings.append(
+                f"₹{left:,.0f} of brought-forward speculation loss could not be "
+                "used: there is no speculative income this year to set it "
+                "against, and section 73 does not allow it against F&O profit "
+                "or anything else. It lapses four assessment years after the "
+                "year it arose."
+            )
 
 
 def _rebate_87a(
@@ -769,6 +952,26 @@ def _add_warnings(
             f"Losses carried forward to the next year: {detail}. "
             "These survive only if the return is filed by the due date."
         )
+
+    if comp.trading is not None and comp.trading.has_anything:
+        comp.warnings.extend(comp.trading.warnings)
+        if comp.audit_required:
+            comp.warnings.append(
+                "With an audit under section 44AB the due date moves to "
+                f"{ay.due_date_audit:%d %B %Y}, and Form 3CA/3CB with Form 3CD "
+                "has to be filed a month before the return."
+            )
+        if regime.key == "old":
+            # Section 115BAC(6). A salaried taxpayer chooses afresh every year
+            # on the return itself; someone with business income does not.
+            comp.warnings.append(
+                "The old regime is cheaper here, but with business income it "
+                "is not a choice you make on the return. Form 10-IEA has to be "
+                f"filed before {ay.due_date_non_audit:%d %B %Y} to opt out of "
+                "section 115BAC — and section 115BAC(6) lets you do that only "
+                "once. Return to the new regime in a later year and you cannot "
+                "leave it again while the business continues."
+            )
 
 
 # --------------------------------------------------------------------------

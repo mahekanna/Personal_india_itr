@@ -20,6 +20,14 @@ ITR1_OTHER_SOURCES_CEILING = D("5000000")
 # ITR-1 accepts LTCG under section 112A up to ₹1.25 lakh from AY 2025-26.
 ITR1_LTCG_CEILING = D("125000")
 
+SEGMENT_NAMES = {
+    "equity_intraday": "intraday equity",
+    "equity_fo": "equity and index F&O",
+    "currency_fo": "currency F&O",
+    "commodity_fo": "commodity F&O",
+    "other_business": "a business or profession",
+}
+
 
 @dataclass
 class FormDecision:
@@ -147,6 +155,29 @@ def select_form(tr: TaxReturn) -> FormDecision:
             "portal directly."
         )
         decision.disqualifications = blocks
+        return decision
+
+    if tr.trading_segments:
+        decision = FormDecision(form="ITR-3", supported=False)
+        segments = ", ".join(
+            sorted({SEGMENT_NAMES.get(s.segment, s.segment)
+                    for s in tr.trading_segments})
+        )
+        decision.reasons.append(
+            f"Trading income is reported from {segments}. Futures and options "
+            "are business income — the provisos to section 43(5) take "
+            "derivatives on a recognised exchange out of the definition of a "
+            "speculative transaction — and intraday equity is a speculative "
+            "business under the same section. Either way it is Schedule BP, "
+            "which only ITR-3 carries."
+        )
+        decision.disqualifications = blocks
+        decision.note = (
+            "ITR-3 JSON generation is not built yet. The computation, the "
+            "turnover and audit determination, and the filing pack are all "
+            "produced in full — enter the figures in the department's offline "
+            "utility, or use the computation sheet with your accountant."
+        )
         return decision
 
     if tr.has_business_income and tr.business.scheme == "none":

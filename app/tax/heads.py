@@ -226,7 +226,22 @@ def compute_house_property(
 # --------------------------------------------------------------------------
 
 
-def compute_business(tr: TaxReturn) -> HeadResult:
+@dataclass
+class BusinessResult(HeadResult):
+    """Business income, split the way sections 43(5) and 73 require.
+
+    ``total`` is the aggregate that enters gross total income. The two
+    components are kept because a speculative loss may never leave its own
+    ring, and the engine needs to know which part is which before it sets
+    anything off.
+    """
+
+    speculative: Decimal = D(0)
+    non_speculative: Decimal = D(0)
+    trading: Optional[object] = None       # trading.TradingResult
+
+
+def compute_business(tr: TaxReturn) -> "BusinessResult":
     lines: List[Line] = []
     business = tr.business
     total = D(0)
@@ -254,10 +269,53 @@ def compute_business(tr: TaxReturn) -> HeadResult:
                           business.higher_declared_income - total))
         total = business.higher_declared_income
 
-    if total:
-        lines.append(Line("Profits and gains of business or profession", total,
+    # ---- Trading segments --------------------------------------------------
+    from .trading import compute_trading
+
+    trading = compute_trading(tr)
+    for segment in trading.segments:
+        lines.append(Line(segment.label, segment.gross_profit))
+        if segment.expenses:
+            lines.append(Line("  Less: brokerage, exchange charges, STT, GST "
+                              "and other costs of the business",
+                              -segment.expenses))
+        if segment.turnover:
+            lines.append(Line(
+                f"  Turnover for section 44AB — {segment.label}",
+                segment.turnover,
+                note="Absolute profit and loss on each trade, per the ICAI "
+                     "Guidance Note (Revised 2023) — not the value of the "
+                     "trades themselves",
+            ))
+        lines.append(Line(f"  Net from {segment.label}", segment.net_income,
                           is_subtotal=True))
-    return HeadResult(total=total, lines=lines)
+
+    # Section 73 keeps speculation in its own ring. A speculative *loss* never
+    # reduces anything else, so it does not enter the head total at all — it is
+    # carried forward whole. A speculative profit does.
+    speculative = trading.speculative_income
+    non_speculative = total + trading.non_speculative_income
+    speculative_in_total = speculative if speculative > 0 else D(0)
+
+    result_total = non_speculative + speculative_in_total
+
+    if trading.has_anything or total:
+        lines.append(Line("Profits and gains of business or profession",
+                          result_total, is_subtotal=True))
+
+    result = BusinessResult(
+        total=result_total, lines=lines,
+        speculative=speculative, non_speculative=non_speculative,
+        trading=trading,
+    )
+    if speculative < 0:
+        result.carried_forward["speculative_business"] = -speculative
+        lines.append(Line(
+            "Speculative loss carried forward u/s 73", -speculative,
+            note="Set off only against speculative income, and only for four "
+                 "assessment years",
+        ))
+    return result
 
 
 # --------------------------------------------------------------------------

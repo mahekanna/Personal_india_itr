@@ -263,7 +263,12 @@ def test_self_occupied_interest_capped_at_2_lakh_in_old_regime():
         HouseProperty(property_type="SOP", interest_24b=D(300_000))
     ]
     comp = compute(tr, "old")
-    assert comp.house_property == D(-200_000)
+    # The loss is set off against salary under section 71, so the head itself
+    # ends at nil and the salary it was set against carries the reduction.
+    assert comp.head_before_setoff["house_property"] == D(-200_000)
+    assert comp.loss_set_off["house_property"] == D(200_000)
+    assert comp.house_property == D(0)
+    assert comp.salary == D(1_250_000)      # 15,00,000 - 50,000 - 2,00,000
 
 
 def test_self_occupied_interest_is_nil_in_new_regime():
@@ -284,8 +289,11 @@ def test_let_out_loss_setoff_capped_at_2_lakh_with_carry_forward():
     ]
     comp = compute(tr, "old")
     # NAV 2,40,000 less 30% = 1,68,000, less interest 8,00,000 = -6,32,000.
-    assert comp.house_property == D(-200_000)
+    assert comp.head_before_setoff["house_property"] == D(-200_000)
+    # Only 2,00,000 may leave the head; the balance is carried forward.
+    assert comp.loss_set_off["house_property"] == D(200_000)
     assert comp.carried_forward["house_property"] == D(432_000)
+    assert comp.salary == D(1_750_000)      # 20,00,000 - 50,000 - 2,00,000
 
 
 def test_let_out_standard_deduction_is_30_percent_of_net_annual_value():

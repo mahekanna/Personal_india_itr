@@ -177,8 +177,63 @@ class CapitalGainItem(_Base):
         )
 
 
+class TradingSegment(_Base):
+    """One segment of a trading account, as its own business.
+
+    A single demat account produces three different heads of income. Delivery
+    equity is capital gains and belongs in ``capital_gains``. Intraday equity is
+    a *speculative* business under section 43(5), ring-fenced by section 73.
+    Futures and options — equity, index, currency, commodity — are ordinary
+    non-speculative business income, because the provisos to section 43(5)
+    exclude derivatives traded on a recognised exchange from the definition.
+
+    They are kept as separate rows rather than one figure because section 73
+    treats speculation as a distinct business, and because the ITR asks for
+    them separately.
+    """
+
+    segment: Literal[
+        "equity_intraday", "equity_fo", "currency_fo", "commodity_fo",
+        "other_business",
+    ] = "equity_fo"
+    # Realised profit or loss for the year, before expenses. Negative for a
+    # losing year — the whole point of reporting it.
+    gross_profit: Money = D(0)
+    # Turnover for section 44AB: the absolute value of each trade's result,
+    # added up. Not the value of the trades. See tax/trading.py.
+    turnover: Money = D(0)
+    # Premium received on options written, to be added to turnover only where
+    # the profit figure above has not already absorbed it. A broker's tax P&L
+    # nets it, so this is usually nil.
+    option_sell_premium: Money = D(0)
+
+    # -- Expenses. All deductible, because this is business income ----------
+    brokerage: Money = D(0)
+    exchange_transaction_charges: Money = D(0)
+    securities_transaction_tax: Money = D(0)   # STT, or CTT on commodities
+    sebi_turnover_fees: Money = D(0)
+    stamp_duty: Money = D(0)
+    gst: Money = D(0)
+    depository_charges: Money = D(0)
+    other_expenses: Money = D(0)               # data feeds, advisory, interest
+    source_document: str = ""
+
+    @property
+    def total_expenses(self) -> Money:
+        return (
+            self.brokerage + self.exchange_transaction_charges
+            + self.securities_transaction_tax + self.sebi_turnover_fees
+            + self.stamp_duty + self.gst + self.depository_charges
+            + self.other_expenses
+        )
+
+    @property
+    def net_income(self) -> Money:
+        return self.gross_profit - self.total_expenses
+
+
 class BusinessIncome(_Base):
-    """Presumptive taxation only — full books of account are out of scope."""
+    """Presumptive schemes, plus the facts the section 44AB test needs."""
 
     scheme: Literal["none", "44AD", "44ADA", "44AE"] = "none"
     nature_of_business_code: str = ""
@@ -189,6 +244,21 @@ class BusinessIncome(_Base):
     declared_income_44ae: Money = D(0)
     # A taxpayer may declare higher than the presumption.
     higher_declared_income: Optional[Money] = None
+
+    # The proviso to section 44AB(a) raises the audit threshold from ₹1 crore
+    # to ₹10 crore where neither cash receipts nor cash payments exceed 5% of
+    # the total. Everything through a broking account is banked, so these stay
+    # at nil unless there is a separate cash business.
+    cash_receipts_fraction: Money = D(0)
+    cash_payments_fraction: Money = D(0)
+    # The year this business first began. The first proviso to section 234C
+    # excuses the earlier instalments only in that first year.
+    is_first_year: bool = False
+    books_audited: bool = False
+    # Form 10-IEA acknowledgement. With business income, opting out of the new
+    # regime needs the form filed before the due date, and section 115BAC(6)
+    # allows the opt-out only once.
+    form_10iea_ack: str = ""
 
 
 class OtherSourcesIncome(_Base):
@@ -588,6 +658,9 @@ class BroughtForwardLoss(_Base):
     assessment_year: str = ""
     house_property_loss: Money = D(0)
     business_loss: Money = D(0)
+    # Section 73 keeps a speculation loss apart: it meets speculative income
+    # and nothing else, and it lapses after four years rather than eight.
+    speculative_loss: Money = D(0)
     stcl: Money = D(0)
     ltcl: Money = D(0)
 
@@ -677,6 +750,7 @@ class TaxReturn(_Base):
     house_properties: List[HouseProperty] = Field(default_factory=list)
     capital_gains: List[CapitalGainItem] = Field(default_factory=list)
     business: BusinessIncome = Field(default_factory=BusinessIncome)
+    trading_segments: List[TradingSegment] = Field(default_factory=list)
     other_sources: OtherSourcesIncome = Field(default_factory=OtherSourcesIncome)
     exempt_income: ExemptIncome = Field(default_factory=ExemptIncome)
     brought_forward_losses: List[BroughtForwardLoss] = Field(default_factory=list)
