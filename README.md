@@ -64,11 +64,30 @@ labelling. Each file is identified, parsed and scored for confidence.
 | AIS / TIS | JSON, PDF | Salary, interest, dividend, rent, securities sales, by information category |
 | Bank interest certificates | PDF | Savings and deposit interest kept separate — only savings interest qualifies for 80TTA |
 | Broker capital gains | XLSX, XLS, CSV | Every transaction, bucketed by asset type and holding period |
+| Broker tax P&L | XLSX, XLS, CSV | **F&O, intraday, currency and commodity**, sorted into the three heads of income they legally belong to, with turnover recomputed |
 | US stock plan and brokerage | XLSX, XLS, CSV | Vesting tranches, **ESPP purchases**, dividends with record dates and per-share rates, reinvestment, disposals — from E*TRADE, Fidelity, Schwab and Morgan Stanley StockPlan Connect |
 
-Zerodha Console, Groww, Upstox, Kuvera, CAMS and KFintech all use different
-column headings for the same six numbers, so headings are mapped onto a
-canonical set rather than maintaining a parser per broker.
+ICICI Direct, Zerodha Console, Groww, Upstox, Angel One, Dhan, Kuvera, CAMS and
+KFintech all use different column headings for the same handful of numbers, so
+headings are mapped onto a canonical set rather than maintaining a parser per
+broker. A file whose headings are unrecognised produces a warning — never an
+empty result, because a year that failed to parse must not look like a year with
+no trading in it.
+
+**Sorts a trading account into the right heads.** One demat account produces
+three, and merging them is unlawful in either direction:
+
+| Segment | Head | Why |
+|---|---|---|
+| Delivery equity | Capital gains | Sections 111A and 112A |
+| Intraday equity | **Speculative** business | Section 43(5). Loss meets speculative income only, and lapses after four years |
+| Equity, index, currency, commodity F&O | **Non-speculative** business | The provisos to section 43(5) take derivatives on a recognised exchange out of the definition |
+
+Turnover is recomputed from the trade rows as the absolute value of each result,
+per the ICAI Guidance Note on Tax Audit (Revised 2023). Many brokers still
+report the pre-2022 figure, which adds the full sale consideration of options —
+a number that can be twenty times the correct one and manufactures a section
+44AB audit out of nothing.
 
 **Reconciles them against each other.** Three mismatches cause almost every
 notice under section 143(1)(a), and all three are checked before you file:
@@ -323,10 +342,11 @@ python demo/build_walkthrough.py --port 8790 \
 
 ## Installing and running
 
-Python 3.10 or newer.
+Python 3.10 or newer. Nothing else — no database server, no account, no
+network service.
 
 ```bash
-git clone <this repository>
+git clone https://github.com/mahekanna/Personal_india_itr.git
 cd Personal_india_itr
 
 python3 -m venv .venv
@@ -336,25 +356,161 @@ pip install -r requirements.txt
 python run.py
 ```
 
-It opens at <http://127.0.0.1:8000>, bound to localhost only — your Form 16 has
-no business being reachable from the network.
+It opens at <http://127.0.0.1:8000>, **bound to localhost only** — your Form 16
+has no business being reachable from the network. Confirm it started cleanly by
+creating a return: the first screen should ask what your year looked like, and
+name a form and a due date.
 
 ```bash
 python run.py --port 9000          # a different port
 python run.py --reload             # reload on code changes
 python run.py --no-browser         # do not open a browser
+
+pytest -q                          # 428 tests, ~3 seconds
 ```
 
-Returns live in a SQLite file at `~/.india-itr/returns.db`. Override with
-`ITR_DATA_DIR`.
+### Where your data lives
+
+One SQLite file at `~/.india-itr/returns.db`, outside the repository so it
+cannot be committed by accident. Override the location with `ITR_DATA_DIR`.
+Delete the file to start over.
+
+**Raw uploads are never stored.** A document is parsed in memory and only the
+extracted figures are kept, so the database holds numbers rather than a copy of
+your Form 16.
+
+### Giving it to someone else
+
+Send them this repository. Do not host it for them.
+
+Hosting other people's tax documents makes you a Data Fiduciary under the DPDP
+Act 2023 — notice, consent, breach reporting to the Data Protection Board and
+to the affected users, a named grievance officer, and penalties up to ₹250 crore
+for failing to take reasonable security safeguards. CERT-In's 2022 directions
+add six-hour breach reporting. And preparing other people's returns, especially
+for a fee, moves towards the e-Return Intermediary registration this project
+exists to avoid.
+
+Self-hosted, none of that applies to you and their data never leaves their
+machine. That is not a compromise; it is the better answer.
+
+If you do host it, note that there is **no ownership model at all** — any
+return can be fetched by its ID with no check on who is asking. That is correct
+for a single-user local tool and an immediate data breach on a public one. You
+would need a user model, an ownership check on every route, CSRF tokens and
+rate limiting before exposing it to anyone.
+
+---
+
+## Collecting your documents
+
+The first screen produces this list tailored to your answers, and the upload
+page keeps it visible as you go. In full, for the situations this covers:
+
+### From the income tax portal — <https://incometax.gov.in>
+
+| What | Where |
+|---|---|
+| **Form 26AS** | e-File → Income Tax Returns → View Form 26AS → continue to TRACES → View Tax Credit → your assessment year |
+| **AIS and TIS** | Services → AIS → your assessment year. Password is your PAN in lower case followed by date of birth as `DDMMYYYY` |
+| **Advance tax challans** | e-Pay Tax → Payment History. You need the BSR code, challan serial number and date — the credit is not matched without all three |
+
+### From your employer
+
+- **Form 16**, Parts A and B, from every employer you had in the year.
+- **Form 12BA**, the perquisite statement. Ask for it by name if it was not
+  issued. It is what values an RSU vest or an ESPP discount, and what tells you
+  whether the perquisite is already inside your Form 16 gross salary — getting
+  that wrong taxes it twice or not at all.
+
+### From your Indian broker
+
+- **Annual tax P&L for the financial year**, segment-wise. It must separate
+  delivery, intraday and F&O; they are three different heads of income.
+- **Annual charges and brokerage statement.** Brokerage, exchange and clearing
+  charges, SEBI fees, STT or CTT, GST, stamp duty and depository charges are all
+  deductible once trading is business income. Not claiming them is money left on
+  the table.
+- **Capital gains statement**, if your broker issues it separately.
+- For mutual funds, the **consolidated capital gains statement** from CAMS or
+  KFintech covers every fund house at once, free by email.
+- For anything bought before 31 January 2018, the **highest quoted price on that
+  date**. Section 55(2)(ac) grandfathers the gain up to it; without the figure
+  you pay tax on a gain that is not taxable.
+
+### From your foreign broker or stock plan administrator
+
+- **Vesting or release statements** for every tranche, with the fair market
+  value on each vesting date.
+- **ESPP purchase confirmations** — fair market value on the purchase date, the
+  price you paid, and the price at the start of the offering.
+- **Form 1099-DIV**, and **Form 1099-B** or the realised gain-and-loss report.
+- **Year-end statement** showing the position on 31 December and the highest
+  value during the calendar year. Schedule FA runs on the *calendar* year.
+- **The company's and the broker's registered address and ZIP code.** Schedule
+  FA asks for both and the portal will not accept the row without them.
+
+### Look up
+
+- **SBI TT buying rate** for the last day of each month in which you had a vest,
+  an ESPP purchase, a dividend or a sale. Rule 115 uses the rate on the last day
+  of the month *before* the income arose, never the rate on the day itself.
+
+---
+
+## Tools
+
+Two scripts in `tools/`, both for the things the application itself cannot
+verify.
+
+### Describing a statement without disclosing it
+
+Teaching the parser a new broker needs the *shape* of the file — sheet names,
+column headings, how many rows of preamble sit above the header, how dates are
+written, whether a loss is `-1234` or `(1,234)`. None of that needs a real
+figure.
+
+```bash
+python tools/describe_statement.py ~/Downloads/broker_tax_pnl.xlsx
+```
+
+Every value is replaced by its type, and anything shaped like a PAN, IFSC,
+account number, client code, email or mobile number is dropped rather than
+described — a description of a PAN is still most of a PAN. Column headings
+survive, because they are the entire point. The output is a dozen lines and is
+safe to paste into an issue. Read it before you send it.
+
+### Checking the JSON against the department's own schema
+
+This is the one open caveat that matters. The arithmetic inside each schedule is
+tested against the statute; the *element names* were written from the published
+schema by hand and have never been checked against it.
+
+CBDT publishes the schema alongside each offline utility — e-Filing portal →
+Downloads → Income Tax Returns → your assessment year, named like
+`ITR-3_2026_Main_V1.1.json`.
+
+```bash
+python tools/validate_against_schema.py ITR-3_2026_Main_V1.1.json return.json
+```
+
+It reports every element name the return emits that the schema does not define
+— each one a probable rejection — plus required elements that are missing, and
+formal violations where the schema file is JSON Schema proper.
 
 ---
 
 ## Using it
 
-The wizard is five steps.
+**0 · Start.** Seventeen yes-or-no questions about what your year looked like,
+answered before anything is uploaded — because nobody knows which documents to
+gather until they know which form they are filing. Out of it comes the form,
+a grouped list of exactly what to fetch and where from, and the dates that
+matter. If your situation is one this cannot compute — crypto, a HUF return,
+non-residence, a business with real books — it says so here and declines,
+rather than producing a plausible wrong answer further down.
 
-**1 · Documents.** Upload everything. Password-protected AIS and 26AS PDFs are
+**1 · Documents.** Upload everything, with the checklist from step 0 alongside. Password-protected AIS and 26AS PDFs are
 opened automatically using the department's convention — PAN in lower case
 followed by date of birth as `DDMMYYYY`, so `abcde1234f01011990`. If nothing has
 been read yet, fill your PAN and date of birth in on the Income page first.
@@ -383,11 +539,39 @@ the filing pack, and an ordered checklist — including paying self-assessment t
 *before* generating the final JSON if there is a balance, and e-verifying within
 30 days, without which the return is treated as never filed.
 
+### Dates, and the one that catches people
+
+Section 139(1) is **staggered by form** from AY 2026-27, as a statutory
+amendment rather than a departmental circular:
+
+| | Due |
+|---|---|
+| ITR-1 and ITR-2 | 31 July |
+| **ITR-3 and ITR-4, no audit** | **31 August** |
+| Tax audit under section 44AB | 31 October |
+| Belated return under 139(4) | 31 December |
+
+A trader measured against the salaried date is told they are late when they are
+not — which costs a ₹5,000 fee under section 234F, interest under 234A, and
+worst of all the **Form 10-IEA** window, since that closes on whichever date
+actually applies. With business income the old regime cannot be chosen on the
+return; Form 10-IEA has to be filed on or before the due date, and section
+115BAC(6) allows the opt-out only once. Miss it and the new regime applies for
+the year whatever the comparison says.
+
+Two more that are easy to lose:
+
+- **Form 67** must be on the portal *before* the return, not with it, or the
+  foreign tax credit is liable to be denied outright.
+- **Losses under sections 72, 73 and 74** carry forward only on a return filed
+  by the due date. A belated return forfeits them. A house property loss under
+  section 71B is the one exception and survives either way.
+
 ---
 
 ## Correctness
 
-The tax engine has 138 golden tests whose expected values were worked out by hand
+The tax engine has golden tests whose expected values were worked out by hand
 from the statute rather than generated by running the code — a test that records
 current behaviour merely freezes bugs in place. They cover every new-regime slab
 boundary, 87A and its marginal relief, surcharge marginal relief at the ₹50 lakh
@@ -395,14 +579,21 @@ threshold, the capital-gains buckets, loss set-off ordering, the Chapter VI-A
 ceilings and the interest sections.
 
 ```bash
-pytest tests/ -q          # 267 tests
+pytest -q                 # 428 tests
 ```
 
-A further 33 tests cover robustness rather than arithmetic: what happens when a
+A further set covers robustness rather than arithmetic: what happens when a
 field holds `1e999`, when an assessment year is one the engine has never heard
 of, when every date is missing, when the upload is not really a PDF. Each was
 found by probing the running application, and each was a real failure before the
 fix it names.
+
+The tests are self-authored, which makes them circular in one direction: they
+test the author's reading of the statute, not the statute. Each cites the
+section it relies on so that the reading can be checked rather than taken on
+trust. Where a defect has been fixed, the test names it and explains what the
+wrong behaviour was — because the interesting thing about a tax bug is not that
+it is fixed but what it used to cost.
 
 Two invariants worth knowing about, because they are easy to get wrong:
 
@@ -525,11 +716,15 @@ app/
     chapter_via.py    Chapter VI-A with the statutory ceilings
     interest.py       Sections 234A, 234B, 234C and the 234F fee
     advance_tax.py    Instalments, and the proviso to section 234C
+    trading.py        F&O, intraday and commodity: which segment is speculative,
+                      turnover under the ICAI note, and the s.44AB test
     engine.py         The computation, and the regime comparison
   parsers/
     base.py           PDF text and table extraction, decryption, field scraping
     registry.py       Document identification and dispatch
     form16.py  form26as.py  ais.py  bank.py  broker.py  us_equity.py
+    trading_pnl.py    A broker's segment-wise tax P&L: F&O, intraday,
+                      currency and commodity
   planner.py          The advance-tax planner
   foreign/
     forex.py          Rule 115 conversion, and which months still need a rate
@@ -543,13 +738,18 @@ app/
     pipeline.py       Folds all of the above into ordinary return entries
   itr/
     selector.py       Which ITR form, and why
-    json_builder.py   ITR-1 and ITR-2 JSON
+    json_builder.py   ITR-1, ITR-2 and ITR-3 JSON
     filing_pack.py    Every figure, mapped to its portal field
+  questionnaire.py    The opening questions, the form, the document checklist,
+                      and the situations this refuses to compute
   reconcile.py        Cross-document checks
   merge.py            Applying reviewed extractions, with de-duplication
   report.py           The computation-sheet PDF
   main.py             Routes
-tests/                267 tests
+tools/
+  describe_statement.py       A statement's shape, with nothing disclosed
+  validate_against_schema.py  The JSON against the department's own schema
+tests/                428 tests
 ```
 
 Adding an assessment year is a data edit in `tax/rules.py`, not a code change —
@@ -593,6 +793,22 @@ Act 2025, section 194K for mutual funds, and the proviso to section 57(i) for th
 Advance tax follows sections 207, 208 and 211, with interest under section 234C
 and its first proviso as substituted by the Finance Act 2021, which extended the
 relief to dividend income.
+
+Trading follows section 43(5): clause (d) of the proviso for derivatives on a
+recognised stock exchange and clause (e) for commodity derivatives, both of
+which are therefore *not* speculative, against the main section for intraday
+equity, which is. Losses follow section 71(2A) — never against salary — section
+72 for eight years, and section 73, which rings speculation off at four.
+Turnover follows the ICAI Guidance Note on Tax Audit (Revised 2023), para 5.10,
+whose eighth edition dropped the full sale consideration of options from the
+computation. The audit threshold is section 44AB(a) with its proviso, which
+raises ₹1 crore to ₹10 crore where cash is under 5% of receipts and payments
+alike.
+
+Due dates follow section 139(1) as staggered from AY 2026-27 by the Finance Act
+2026 — 31 July, 31 August for a business return without an audit, 31 October
+with one — and the regime election follows section 115BAC(6) with Form 10-IEA
+under Rule 21AGA, which ties the opt-out to whichever of those dates applies.
 
 Foreign equity follows sections 17(2)(vi) and 49(2AA) for RSU vesting, ESPP
 discounts and cost basis, with Rule 3(8) for fair market value, section 112 for gains on shares not listed on a recognised Indian stock
