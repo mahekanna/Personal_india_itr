@@ -15,5 +15,9 @@ pandas==2.2.3               # Broker P&L, AIS Excel, bank statements
 openpyxl==3.1.5             # .xlsx reader backend
 xlrd==2.0.1                 # legacy .xls reader backend
 
+# Schema validation — checks the generated ITR JSON against the department's
+# own published schema. See tools/validate_against_schema.py.
+jsonschema==4.26.0
+
 # Reporting
 reportlab==4.2.5            # Computation sheet PDF
