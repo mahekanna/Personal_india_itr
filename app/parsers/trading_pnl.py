@@ -73,7 +73,16 @@ _ALIASES: Dict[str, Tuple[str, ...]] = {
     "stamp_duty": ("stamp duty", "stamp charges", "stamp"),
     "gst": ("gst", "service tax", "goods and services tax", "igst", "cgst"),
     "dp_charges": ("dp charges", "depository charges", "demat charges"),
-    "other_charges": ("other charges", "misc charges", "clearing charges"),
+    # Last of the charge fields deliberately: the narrower ones above claim
+    # their own columns first, so a bare "Charges" or "Total Charges" — which
+    # is all some brokers give you — falls through to here rather than being
+    # dropped. Unmapped, those charges silently go unclaimed, and they are
+    # deductible business expenses.
+    "other_charges": (
+        "other charges", "misc charges", "clearing charges", "total charges",
+        "charges", "taxes and charges", "total taxes and charges",
+        "other expenses", "expenses",
+    ),
     "segment": ("segment", "product", "product type", "exchange", "category",
                 "type"),
 }

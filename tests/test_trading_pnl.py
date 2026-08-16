@@ -262,3 +262,107 @@ def test_a_whole_workbook_reaches_the_tax_computation():
     # Delivery equity stayed in capital gains at the concessional rate.
     assert [s.code for s in comp.special_slices] == ["ltcg_112a"]
     assert comp.audit_required is False
+
+
+# --------------------------------------------------------------------------
+# Other brokers
+# --------------------------------------------------------------------------
+#
+# The parser maps column names, not brokers, so it should read whatever an
+# Indian broker exports without a parser each. These fixtures are shaped like
+# what each one is reported to produce — none is a verified sample — but they
+# pin the mapping against genuinely different naming conventions.
+
+
+BROKER_FORMATS = {
+    "zerodha": ("F&O", [
+        ["Tradewise P&L", None, None, None, None, None],
+        ["Symbol", "Entry Date", "Exit Date", "Quantity", "Realized P&L",
+         "Turnover"],
+        ["NIFTY25AUG24500CE", "2025-08-01", "2025-08-28", "750", "-125000",
+         "125000"],
+        ["BANKNIFTY25SEPFUT", "2025-09-01", "2025-09-25", "450", "310000",
+         "310000"],
+    ], "equity_fo", D(185_000), D(435_000)),
+    "groww": ("Futures and Options", [
+        ["Stock Name", "Trade Date", "Qty", "Net P&L", "Charges"],
+        ["NIFTY 25000 PE", "2025-10-30", "300", "-64000", "2250"],
+    ], "equity_fo", D(-64_000), D(64_000)),
+    "upstox": ("Derivatives", [
+        ["Scrip", "Expiry", "Quantity", "Profit / Loss", "Total Brokerage",
+         "STT"],
+        ["NIFTY AUG FUT", "2025-08-28", "500", "95000", "1500", "2000"],
+    ], "equity_fo", D(95_000), D(95_000)),
+    "angelone_commodity": ("Commodity MCX", [
+        ["Contract", "Trade Date", "Lots", "P&L", "Brokerage"],
+        ["GOLD DEC FUT", "2025-11-05", "2", "-38000", "500"],
+    ], "commodity_fo", D(-38_000), D(38_000)),
+    "angelone_currency": ("Currency Segment", [
+        ["Contract", "Trade Date", "Lots", "P&L", "Brokerage"],
+        ["USDINR FUT", "2025-07-29", "10", "22000", "350"],
+    ], "currency_fo", D(22_000), D(22_000)),
+}
+
+
+@pytest.mark.parametrize("broker", sorted(BROKER_FORMATS))
+def test_other_brokers_parse_without_a_parser_each(broker):
+    sheet, rows, segment, profit, turnover = BROKER_FORMATS[broker]
+    segments = by_segment(parse_tabular(workbook({sheet: rows}), f"{broker}.xlsx"))
+
+    assert segment in segments, f"{broker} produced nothing"
+    assert segments[segment]["gross_profit"] == profit
+    assert segments[segment]["turnover"] == turnover
+
+
+def test_a_bare_charges_column_is_not_dropped():
+    """Some brokers itemise every charge; others give one "Charges" figure.
+    Unmapped it went unclaimed, and these are deductible business expenses."""
+    sheet, rows, _, _, _ = BROKER_FORMATS["groww"]
+    segments = by_segment(parse_tabular(workbook({sheet: rows}), "groww.xlsx"))
+    assert segments["equity_fo"]["other_expenses"] == D(2_250)
+
+
+def test_the_catch_all_does_not_steal_the_itemised_columns():
+    """"Charges" is a substring of half the other headings. The narrower
+    fields have to claim theirs first or the breakdown collapses into one
+    number."""
+    from app.parsers.trading_pnl import _map_columns
+
+    mapping = _map_columns([
+        "Contract", "Profit/Loss", "Brokerage", "Exchange Transaction Charges",
+        "STT", "SEBI Turnover Fees", "Stamp Duty", "GST", "DP Charges",
+        "Other Charges",
+    ])
+    assert mapping["brokerage"] == "Brokerage"
+    assert mapping["exchange_charges"] == "Exchange Transaction Charges"
+    assert mapping["dp_charges"] == "DP Charges"
+    assert mapping["other_charges"] == "Other Charges"
+
+
+def test_a_per_row_segment_column_beats_the_sheet_name():
+    """Some brokers put every segment on one sheet with a segment column."""
+    csv = (
+        "Dhan Tax P&L Report\n"
+        "segment,scrip,trade_date,quantity,profit_loss,brokerage\n"
+        "FNO,NIFTY 25100 CE,2025-09-11,600,74000,1800\n"
+        "INTRADAY,TATASTEEL,2025-06-02,400,-12000,600\n"
+    ).encode()
+    segments = by_segment(parse_tabular(csv, "dhan_pnl.csv"))
+
+    assert segments["equity_fo"]["gross_profit"] == D(74_000)
+    assert segments["equity_intraday"]["gross_profit"] == D(-12_000)
+
+
+def test_an_unrecognised_format_says_so_rather_than_reading_nothing():
+    """The failure has to be loud. A broker this parser has never seen must
+    not look like a year with no trading in it."""
+    rows = [
+        ["Mystery Broker Report", None, None],
+        ["Ticker Ref", "Movement", "Net Value"],
+        ["ABC123", "10", "5000"],
+    ]
+    out = parse_tabular(workbook({"Sheet1": rows}), "unknown_broker.xlsx")
+    assert out.trading_segments == []
+    assert out.warnings
+    assert any("not ones this parser knows" in w or "could not be placed" in w
+               for w in out.warnings)
