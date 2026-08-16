@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 from ..money import D, inr
 from ..schemas import TaxReturn
 from ..tax.engine import Computation
-from ..tax.rules import get_ay
+from ..tax.rules import due_date_for, get_ay
 
 
 @dataclass
@@ -238,7 +238,7 @@ def _filing_section_label(tr: TaxReturn, ay) -> str:
     filing_date = tr.filing_date or date.today()
     if tr.is_revised:
         return "139(5) — revised return"
-    if filing_date > ay.due_date_non_audit:
+    if filing_date > due_date_for(ay, has_business=bool(tr.trading_segments)):
         return "139(4) — belated return"
     return "139(1) — on or before the due date"
 

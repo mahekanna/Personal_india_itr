@@ -382,3 +382,64 @@ def test_delivery_equity_alone_still_allows_the_simpler_forms():
         sale_consideration=D("200000"), cost_of_acquisition=D("150000"),
     )]
     assert select_form(tr).form == "ITR-1"
+
+
+# --------------------------------------------------------------------------
+# Section 139(1) is staggered from AY 2026-27
+# --------------------------------------------------------------------------
+
+
+def test_a_business_return_has_until_31_august_not_31_july():
+    """Finance Act 2026 staggered section 139(1) as a statutory amendment, not
+    a departmental extension: ITR-1 and ITR-2 keep 31 July, ITR-3 and ITR-4
+    without an audit get 31 August. Charging a trader from the salaried date
+    invents a s.234F fee and s.234A interest, and — worse — closes the Form
+    10-IEA window a month early."""
+    from app.tax.rules import due_date_for
+
+    assert due_date_for(AY) == date(2026, 7, 31)
+    assert due_date_for(AY, has_business=True) == date(2026, 8, 31)
+    assert due_date_for(AY, audit=True) == date(2026, 10, 31)
+
+
+def test_a_trader_filing_on_16_august_owes_no_late_fee():
+    tr = salaried()
+    tr.filing_date = date(2026, 8, 16)
+    tr.trading_segments = [TradingSegment(
+        segment="equity_fo", gross_profit=D("500000"), turnover=D("2000000"),
+    )]
+    comp = compute(tr, "new", AY)
+
+    assert comp.interest.section_234f == D(0)
+    assert comp.interest.section_234a == D(0)
+
+
+def test_a_purely_salaried_return_on_the_same_day_is_late():
+    """The staggering is by form, not by taxpayer."""
+    tr = salaried()
+    tr.filing_date = date(2026, 8, 16)
+    comp = compute(tr, "new", AY)
+    assert comp.interest.section_234f == D(5_000)
+
+
+def test_the_json_calls_a_16_august_business_return_timely():
+    from app.itr.json_builder import build_itr3
+
+    tr = salaried()
+    tr.taxpayer.name = "Test User"
+    tr.filing_date = date(2026, 8, 16)
+    tr.trading_segments = [TradingSegment(
+        segment="equity_fo", gross_profit=D("500000"), turnover=D("2000000"),
+    )]
+    comp = compute(tr, "new", AY)
+    status = build_itr3(tr, comp)["ITR"]["ITR3"]["PartA_GEN1"]["FilingStatus"]
+    assert status["ReturnFileSec"] == 11          # 139(1), not 139(4)
+
+
+def test_ay_2025_26_had_no_staggering():
+    """It was one CBDT extension to 15 September for every non-audit filer."""
+    from app.tax.rules import due_date_for, get_ay
+
+    previous = get_ay("2025-26")
+    assert due_date_for(previous) == date(2025, 9, 15)
+    assert due_date_for(previous, has_business=True) == date(2025, 9, 15)

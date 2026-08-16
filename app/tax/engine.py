@@ -417,6 +417,7 @@ def compute(
         total_income=comp.total_income,
         filing_date=tr.filing_date,
         is_audit_case=comp.audit_required,
+        has_business=has_business,
         has_only_pension_or_no_business=not has_business,
         is_senior_citizen=band_key in ("senior", "super_senior"),
         deferrable=comp.deferrable,

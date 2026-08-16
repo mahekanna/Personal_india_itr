@@ -111,7 +111,14 @@ class AssessmentYear:
     fy: str
     fy_start: date
     fy_end: date
+    # Section 139(1) is staggered from AY 2026-27, by a statutory amendment
+    # rather than a departmental circular: ITR-1 and ITR-2 keep 31 July, while
+    # ITR-3 and ITR-4 without an audit get until 31 August. Charging a business
+    # filer from the salaried date costs them a s.234F fee, s.234A interest and
+    # — worst of all — the Form 10-IEA window, since that closes on whichever
+    # of these dates actually applies to them.
     due_date_non_audit: date
+    due_date_business_non_audit: date
     due_date_audit: date
     belated_return_deadline: date
     cess_rate: Decimal
@@ -277,6 +284,7 @@ AY_2026_27 = AssessmentYear(
     fy_start=date(2025, 4, 1),
     fy_end=date(2026, 3, 31),
     due_date_non_audit=date(2026, 7, 31),
+    due_date_business_non_audit=date(2026, 8, 31),
     due_date_audit=date(2026, 10, 31),
     belated_return_deadline=date(2026, 12, 31),
     cess_rate=D("0.04"),
@@ -361,6 +369,7 @@ AY_2025_26 = AssessmentYear(
     fy_start=date(2024, 4, 1),
     fy_end=date(2025, 3, 31),
     due_date_non_audit=date(2025, 9, 15),
+    due_date_business_non_audit=date(2025, 9, 15),
     due_date_audit=date(2025, 10, 31),
     belated_return_deadline=date(2025, 12, 31),
     cess_rate=D("0.04"),
@@ -440,6 +449,24 @@ ASSESSMENT_YEARS: Dict[str, AssessmentYear] = {
 }
 
 CURRENT_AY = "2026-27"
+
+
+def due_date_for(
+    ay: AssessmentYear, *, has_business: bool = False, audit: bool = False
+) -> date:
+    """The section 139(1) due date that actually applies to this return.
+
+    Three dates, and which one applies turns on the form rather than on the
+    taxpayer: an audit case has until 31 October, a business return without an
+    audit until 31 August, and everyone else 31 July. It matters beyond the
+    late-filing fee — Form 10-IEA and the carry-forward of losses both close on
+    the date that applies here, not on the earliest of the three.
+    """
+    if audit:
+        return ay.due_date_audit
+    if has_business:
+        return ay.due_date_business_non_audit
+    return ay.due_date_non_audit
 
 
 def get_ay(ay: str | None = None) -> AssessmentYear:

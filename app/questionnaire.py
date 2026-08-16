@@ -497,16 +497,27 @@ def _add_deadlines(guidance: Guidance, answers: Dict[str, bool], ay) -> None:
     trading = answers.get("fno") or answers.get("intraday")
     business = trading or answers.get("business")
 
+    from .tax.rules import due_date_for
+
+    due = due_date_for(ay, has_business=bool(business))
     guidance.deadlines.append(
-        f"Return due {ay.due_date_non_audit:%d %B %Y} — or "
-        f"{ay.due_date_audit:%d %B %Y} if a tax audit under section 44AB "
-        "applies."
+        f"Return due {due:%d %B %Y}"
+        + (
+            " — section 139(1) gives a business return without an audit until "
+            f"{ay.due_date_business_non_audit:%d %B %Y}, a month later than "
+            f"the {ay.due_date_non_audit:%d %B} date everyone quotes"
+            if business else ""
+        )
+        + f". With a tax audit under section 44AB it is "
+          f"{ay.due_date_audit:%d %B %Y}."
     )
     if business:
         guidance.deadlines.append(
-            f"Form 10-IEA, before {ay.due_date_non_audit:%d %B %Y}, if you "
-            "want the old regime. With business income it cannot be chosen on "
-            "the return, and section 115BAC(6) allows the opt-out only once."
+            f"Form 10-IEA, on or before {due:%d %B %Y}, if you want the old "
+            "regime. With business income it cannot be chosen on the return, "
+            "and section 115BAC(6) allows the opt-out only once. Miss this "
+            "date and the new regime applies for the year whatever the "
+            "comparison says."
         )
     if answers.get("foreign_dividend"):
         guidance.deadlines.append(
@@ -514,8 +525,9 @@ def _add_deadlines(guidance: Guidance, answers: Dict[str, bool], ay) -> None:
             "with it."
         )
     guidance.deadlines.append(
-        f"Losses only carry forward if the return is filed by "
-        f"{ay.due_date_non_audit:%d %B %Y}. A belated return forfeits them."
+        f"Business and capital losses only carry forward if the return is "
+        f"filed by {due:%d %B %Y}. A belated return forfeits them — a house "
+        "property loss is the one exception and survives either way."
     )
     guidance.deadlines.append(
         "E-verify within 30 days of filing. An unverified return is treated as "

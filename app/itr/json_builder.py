@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 from ..money import D, non_negative, rupees
 from ..schemas import TaxReturn
 from ..tax.engine import Computation
-from ..tax.rules import get_ay
+from ..tax.rules import due_date_for, get_ay
 
 # Bump these when the department publishes a new schema for the year.
 SCHEMA_VERSIONS = {
@@ -73,18 +73,20 @@ def _creation_info(today: date) -> Dict[str, Any]:
     }
 
 
-def _filing_section(tr: TaxReturn, ay, audit: bool = False) -> int:
+def _filing_section(
+    tr: TaxReturn, ay, audit: bool = False, has_business: bool = False
+) -> int:
     """Section 139 sub-clause the return is filed under.
 
-    An audit case has until 31 October, so a September filing is on time under
-    139(1) rather than belated under 139(4). Measuring it against the non-audit
-    date declared a punctual return late.
+    Which due date applies turns on the form: 31 October with an audit,
+    31 August for a business return without one, 31 July otherwise. Measuring
+    every return against the earliest of the three declared punctual returns
+    belated, which is a materially different thing to tell the department.
     """
     filing_date = tr.filing_date or date.today()
     if tr.is_revised:
         return 17          # 139(5) revised
-    due = ay.due_date_audit if audit else ay.due_date_non_audit
-    if filing_date > due:
+    if filing_date > due_date_for(ay, has_business=has_business, audit=audit):
         return 12          # 139(4) belated
     return 11              # 139(1) on or before the due date
 
@@ -1147,15 +1149,17 @@ def build_itr3(tr: TaxReturn, comp: Computation) -> Dict[str, Any]:
     }
 
     filing_status: Dict[str, Any] = {
-        "ReturnFileSec": _filing_section(tr, ay, audit=comp.audit_required),
+        "ReturnFileSec": _filing_section(
+            tr, ay, audit=comp.audit_required, has_business=True
+        ),
         "NewTaxRegime": "Y" if comp.regime == "new" else "N",
         "SeventhProvisio139": "N",
     }
     # Opting out of section 115BAC with business income is done on Form 10-IEA,
     # not on the return, and the acknowledgement number goes here.
     if comp.regime == "old":
-        filing_status["ItrFilingDueDate"] = (
-            ay.due_date_audit if comp.audit_required else ay.due_date_non_audit
+        filing_status["ItrFilingDueDate"] = due_date_for(
+            ay, has_business=True, audit=comp.audit_required
         ).isoformat()
         if tr.business.form_10iea_ack:
             filing_status["Form10IEAAckNo"] = tr.business.form_10iea_ack

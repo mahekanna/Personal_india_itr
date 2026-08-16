@@ -15,7 +15,7 @@ from typing import List, Optional, Tuple
 
 from ..money import D, non_negative, rupees
 from .advance_tax import DeferrableItem, section_234c
-from .rules import AssessmentYear
+from .rules import AssessmentYear, due_date_for
 
 
 @dataclass
@@ -62,12 +62,15 @@ def compute_interest_and_fee(
     total_income: Decimal,
     filing_date: Optional[date],
     is_audit_case: bool = False,
+    has_business: bool = False,
     has_only_pension_or_no_business: bool = False,
     is_senior_citizen: bool = False,
     deferrable: Optional[List[DeferrableItem]] = None,
 ) -> InterestResult:
     result = InterestResult()
-    due_date = ay.due_date_audit if is_audit_case else ay.due_date_non_audit
+    due_date = due_date_for(
+        ay, has_business=has_business, audit=is_audit_case
+    )
     filing = filing_date or date.today()
 
     assessed_tax = non_negative(total_tax_liability - tds_tcs)
