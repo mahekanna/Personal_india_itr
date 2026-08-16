@@ -196,6 +196,36 @@ class DocumentNeed:
     where: str
     why: str = ""
     essential: bool = True
+    # Which download to pick when the source offers a choice. This is where
+    # people lose the most time: TRACES offers HTML, text and PDF; the AIS
+    # offers PDF and JSON; a broker offers PDF and Excel. Only one of each is
+    # the right answer, and nothing on those screens says which.
+    file_format: str = ""
+
+    @property
+    def key(self) -> str:
+        """A stable identifier, so a tick survives re-answering the questions."""
+        import hashlib
+
+        return hashlib.sha1(self.name.encode()).hexdigest()[:12]
+
+
+@dataclass
+class Trip:
+    """One place you have to go, and everything to collect while you are there.
+
+    Documents were grouped by head of income, which is how the *return* is
+    organised and not how the collecting is. You do not visit "salary"; you log
+    into one portal, email one employer, open one broker account. Grouping by
+    destination turns a list of twenty-eight things into five short errands, in
+    an order where nothing blocks anything after it.
+    """
+
+    number: int
+    title: str
+    where: str
+    note: str = ""
+    documents: List[DocumentNeed] = field(default_factory=list)
 
 
 # Situations this system does not compute correctly. Each one is asked about
@@ -242,6 +272,9 @@ class Guidance:
     form_reasons: List[str] = field(default_factory=list)
     form_supported: bool = True
     form_note: str = ""
+    # The same documents twice over: as ordered errands, which is how they get
+    # collected, and flat by group, which is how the upload page shows them.
+    trips: List[Trip] = field(default_factory=list)
     documents: Dict[str, List[DocumentNeed]] = field(default_factory=dict)
     deadlines: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
@@ -255,7 +288,21 @@ class Guidance:
 
     @property
     def document_count(self) -> int:
-        return sum(len(items) for items in self.documents.values())
+        return sum(len(trip.documents) for trip in self.trips)
+
+    @property
+    def all_documents(self) -> List[DocumentNeed]:
+        return [item for trip in self.trips for item in trip.documents]
+
+    def gathered(self, collected) -> int:
+        keys = set(collected or ())
+        return sum(1 for item in self.all_documents if item.key in keys)
+
+    def outstanding(self, collected) -> List[DocumentNeed]:
+        """What is still to fetch, essentials first — the actual next action."""
+        keys = set(collected or ())
+        left = [item for item in self.all_documents if item.key not in keys]
+        return sorted(left, key=lambda item: not item.essential)
 
 
 def _need(group: str, guidance: Guidance, *needs: DocumentNeed) -> None:
@@ -278,275 +325,14 @@ def build_guidance(answers: Dict[str, bool], assessment_year: str) -> Guidance:
         form_note=decision.note,
     )
 
-    # ---- Everyone ---------------------------------------------------------
-    _need("Always needed", guidance,
-        DocumentNeed(
-            "PAN, and an Aadhaar linked to it",
-            "Your own records",
-            "An unlinked PAN makes the return invalid, not merely late.",
-        ),
-        DocumentNeed(
-            "Bank account number and IFSC for the refund",
-            "Your passbook or net banking",
-            "The account has to be pre-validated on the portal before a refund "
-            "can be issued to it.",
-        ),
-        DocumentNeed(
-            "Form 26AS",
-            "Portal → e-File → Income Tax Returns → View Form 26AS (TRACES)",
-            "The tax credit statement. Anything you claim that is not here "
-            "will be disallowed at processing.",
-        ),
-        DocumentNeed(
-            "Annual Information Statement (AIS) and TIS",
-            "Portal → Services → AIS. Password is your PAN in lower case "
-            "followed by your date of birth as DDMMYYYY",
-            "Income the AIS shows and the return omits is the single "
-            "commonest reason a notice arrives.",
-        ),
-    )
+    guidance.trips = _build_trips(answers, ay)
+    # The flat grouping is kept because the upload page and the tests read it,
+    # but the trips are what a person actually follows.
+    for trip in guidance.trips:
+        guidance.documents[f"{trip.number}. {trip.title}"] = trip.documents
 
-    # ---- Salary -----------------------------------------------------------
-    if yes("salary"):
-        _need("Salary", guidance,
-            DocumentNeed(
-                "Form 16, Part A and Part B"
-                + (" — from every employer" if yes("multiple_employers") else ""),
-                "Your employer, usually by mid-June",
-            ),
-        )
-        if yes("multiple_employers"):
-            guidance.warnings.append(
-                "With two employers, each one almost certainly gave you the "
-                "full standard deduction and the full basic exemption again. "
-                "The combined figures rarely match either Form 16, and the "
-                "shortfall is payable with interest."
-            )
-        if yes("foreign_equity"):
-            _need("Salary", guidance, DocumentNeed(
-                "Form 12BA",
-                "Your employer, issued with Form 16",
-                "The perquisite statement. It is what values an RSU vest or an "
-                "ESPP discount, and what tells you whether the perquisite is "
-                "already inside your Form 16 gross salary.",
-            ))
-        if yes("old_regime"):
-            _need("Salary", guidance, DocumentNeed(
-                "Rent receipts and your landlord's PAN",
-                "Your landlord",
-                "Only if you claim HRA, and the PAN is required once the rent "
-                "passes ₹1,00,000 in the year.",
-                essential=False,
-            ))
 
-    # ---- House property ---------------------------------------------------
-    if yes("house_property"):
-        _need("House property", guidance, DocumentNeed(
-            "Home loan interest certificate",
-            "Your lender, for the financial year",
-            "It splits interest from principal — interest goes under section "
-            "24(b), principal under 80C.",
-            essential=False,
-        ))
-        if yes("house_let_out"):
-            _need("House property", guidance,
-                DocumentNeed("Rent agreement and a record of rent received",
-                             "Your own records"),
-                DocumentNeed("Municipal tax receipts",
-                             "Your local authority",
-                             "Deductible only in the year actually paid.",
-                             essential=False),
-            )
-
-    # ---- Delivery equity and mutual funds ---------------------------------
-    if yes("equity_delivery"):
-        _need("Investments", guidance,
-            DocumentNeed(
-                "Capital gains statement, trade-wise",
-                "Your broker's annual tax report",
-                "Trade-wise rather than summary — the holding period on each "
-                "lot decides the rate.",
-            ),
-            DocumentNeed(
-                "Consolidated capital gains statement for mutual funds",
-                "CAMS or KFintech, free by email",
-                "Covers every fund house at once.",
-                essential=False,
-            ),
-            DocumentNeed(
-                "Highest quoted price on 31 January 2018",
-                "The exchange, for anything bought before that date",
-                "Section 55(2)(ac) grandfathers the gain up to that date. "
-                "Without the figure the cost is understated and you pay tax on "
-                "a gain that is not taxable.",
-                essential=False,
-            ),
-        )
-
-    # ---- Trading ----------------------------------------------------------
-    if yes("fno") or yes("intraday"):
-        _need("Trading", guidance,
-            DocumentNeed(
-                "Annual tax P&L, segment-wise",
-                "Your broker — ICICI Direct, Zerodha Console and the rest all "
-                "publish one after the year ends",
-                "It must separate delivery, intraday and F&O. They are three "
-                "different heads of income and merging them is unlawful in "
-                "either direction.",
-            ),
-            DocumentNeed(
-                "Annual charges and brokerage statement",
-                "Your broker",
-                "Brokerage, exchange and clearing charges, SEBI fees, STT or "
-                "CTT, GST, stamp duty and depository charges are all "
-                "deductible against business income. Not claiming them is the "
-                "compensation for the concessional rate you have already lost.",
-            ),
-            DocumentNeed(
-                "Bank statement for the trading account",
-                "Your bank",
-                "Needed to show that receipts and payments were banked — that "
-                "is what keeps the section 44AB audit threshold at ₹10 crore "
-                "rather than ₹1 crore.",
-                essential=False,
-            ),
-        )
-        guidance.warnings.append(
-            "F&O and intraday make this a business return. That means ITR-3, "
-            "and it means the old regime — if it turns out cheaper — has to be "
-            "chosen on Form 10-IEA before the due date rather than on the "
-            "return itself."
-        )
-
-    if yes("business"):
-        _need("Business", guidance,
-            DocumentNeed("Books of account, or receipts and expense records",
-                         "Your own records"),
-            DocumentNeed("Bank statements for the business account",
-                         "Your bank"),
-            DocumentNeed(
-                "GST returns, if registered",
-                "The GST portal",
-                "Turnover has to agree with what was declared there.",
-                essential=False,
-            ),
-        )
-
-    # ---- Foreign ----------------------------------------------------------
-    if yes("foreign_equity"):
-        _need("Foreign holdings", guidance,
-            DocumentNeed(
-                "Vesting or release statements for every tranche",
-                "Your stock plan administrator — E*TRADE, Fidelity, Schwab, "
-                "Morgan Stanley",
-                "Each vest needs the fair market value on its own date. "
-                "Sixteen tranches are sixteen separate salary events at "
-                "sixteen different exchange rates.",
-            ),
-            DocumentNeed(
-                "ESPP purchase confirmations",
-                "Your stock plan administrator",
-                "The fair market value on the purchase date, the price you "
-                "paid, and the price at the start of the offering. The "
-                "lookback usually makes the real discount far more than the "
-                "headline 15%.",
-                essential=False,
-            ),
-            DocumentNeed(
-                "Form 1099-B or realised gain-and-loss report",
-                "Your broker",
-                "Its cost basis is correct for US tax and wrong for Indian "
-                "tax — section 49(2AA) fixes the cost at the value already "
-                "taxed as a perquisite. Copying the US figure taxes the "
-                "discount twice.",
-                essential=False,
-            ),
-            DocumentNeed(
-                "Year-end statement showing the position on 31 December and "
-                "the highest value during the calendar year",
-                "Your broker",
-                "Schedule FA runs on the calendar year, not the financial "
-                "year. For AY " + ay.ay + " that is calendar "
-                + str(ay.fy_start.year) + ".",
-            ),
-            DocumentNeed(
-                "The company's and the broker's registered address and ZIP code",
-                "The company's investor relations page; the broker's statement",
-                "Schedule FA asks for both and the portal will not accept the "
-                "row without them.",
-            ),
-            DocumentNeed(
-                "SBI TT buying rate for each relevant month end",
-                "sbi.co.in, or your bank",
-                "Rule 115 uses the rate on the last day of the month *before* "
-                "the income arose — never the rate on the day itself.",
-            ),
-        )
-        guidance.warnings.append(
-            "Schedule FA has no threshold and no exemption. A resident and "
-            "ordinarily resident who held any foreign asset at any point in "
-            "the calendar year must report it, whatever it was worth and "
-            "whether or not it paid anything. The penalty for omitting one is "
-            "a flat ₹10 lakh under the Black Money Act, assessed on the "
-            "non-disclosure rather than on any tax — so it applies in full "
-            "even when the tax was paid correctly."
-        )
-
-    if yes("foreign_dividend"):
-        _need("Foreign holdings", guidance,
-            DocumentNeed(
-                "Form 1099-DIV or the dividend activity report",
-                "Your broker",
-                "Declare the gross amount, before the 25% the US withholds. "
-                "Netting it off understates income by a quarter and forfeits "
-                "the credit.",
-            ),
-            DocumentNeed(
-                "Form 67",
-                "File it on the portal BEFORE you file the return",
-                "The foreign tax credit is liable to be denied outright if "
-                "Form 67 is not already on record. This is the single "
-                "easiest way to lose money on this return.",
-            ),
-        )
-
-    # ---- Other income and deductions --------------------------------------
-    if yes("other_income"):
-        _need("Other income", guidance,
-            DocumentNeed("Interest certificates from every bank",
-                         "Net banking, usually under 'Tax'"),
-            DocumentNeed("Dividend statements",
-                         "Your demat account or the registrar",
-                         "TDS at 10% applies under section 194 once one payer "
-                         "crosses ₹10,000 in the year.",
-                         essential=False),
-        )
-
-    if yes("old_regime"):
-        _need("Deductions", guidance,
-            DocumentNeed("80C proofs — PF, PPF, ELSS, life insurance, tuition "
-                         "fees, home loan principal", "Your own records",
-                         essential=False),
-            DocumentNeed("80D health insurance premium receipts",
-                         "Your insurer", essential=False),
-            DocumentNeed(
-                "80G donation receipts",
-                "The institution",
-                "The receipt must carry the donee's PAN and its 80G "
-                "registration number, or the deduction fails.",
-                essential=False,
-            ),
-            DocumentNeed("NPS statement, for 80CCD(1B)",
-                         "Your CRA — Protean or KFintech", essential=False),
-        )
-
-    _need("Taxes already paid", guidance, DocumentNeed(
-        "Advance tax and self-assessment challans",
-        "Portal → e-Pay Tax → Payment History",
-        "The BSR code, challan serial number and date all go on the return, "
-        "and the credit will not be matched without all three.",
-        essential=False,
-    ))
+    _add_warnings(guidance, answers)
 
     for key, message in UNSUPPORTED.items():
         if yes(key):
@@ -558,6 +344,295 @@ def build_guidance(answers: Dict[str, bool], assessment_year: str) -> Guidance:
 
     _add_deadlines(guidance, answers, ay)
     return guidance
+
+
+def _add_warnings(guidance: Guidance, answers: Dict[str, bool]) -> None:
+    """The handful of things that cost real money and nobody expects."""
+    yes = lambda key: bool(answers.get(key))     # noqa: E731
+
+    if yes("multiple_employers"):
+        guidance.warnings.append(
+            "With two employers, each one almost certainly gave you the full "
+            "standard deduction and the full basic exemption again. The "
+            "combined figures rarely match either Form 16, and the shortfall "
+            "is payable with interest."
+        )
+
+    if yes("fno") or yes("intraday"):
+        guidance.warnings.append(
+            "F&O and intraday make this a business return. That means ITR-3, "
+            "and it means the old regime — if it turns out cheaper — has to be "
+            "chosen on Form 10-IEA before the due date rather than on the "
+            "return itself."
+        )
+
+    if yes("foreign_equity"):
+        guidance.warnings.append(
+            "Schedule FA has no threshold and no exemption. A resident and "
+            "ordinarily resident who held any foreign asset at any point in "
+            "the calendar year must report it, whatever it was worth and "
+            "whether or not it paid anything. The penalty for omitting one is "
+            "a flat ₹10 lakh under the Black Money Act, assessed on the "
+            "non-disclosure rather than on any tax — so it applies in full "
+            "even when the tax was paid correctly."
+        )
+
+
+def _build_trips(answers: Dict[str, bool], ay) -> List[Trip]:
+    """The whole collection, as errands in the order they should be run.
+
+    Ordering rule: nothing in a later trip is needed to complete an earlier
+    one. The portal comes first because Form 26AS and the AIS between them tell
+    you what the department already believes about your year, which is the only
+    way to know whether anything further down is missing.
+    """
+    yes = lambda key: bool(answers.get(key))     # noqa: E731
+    trading = yes("fno") or yes("intraday")
+    trips: List[Trip] = []
+    fy_label = f"{ay.fy_start.year}" if ay else ""
+
+    # -- 1 ------------------------------------------------------------------
+    portal = Trip(
+        1, "The income tax portal",
+        "incometax.gov.in — log in with your PAN",
+        f"One login. Select assessment year {ay.ay} everywhere it asks — that "
+        f"is the year after the money was earned. If a statement looks emptier "
+        f"than you expect, you have picked the previous year.",
+    )
+    portal.documents += [
+        DocumentNeed(
+            "Form 26AS",
+            "e-File → Income Tax Returns → View Form 26AS → continue to "
+            "TRACES → View Tax Credit",
+            "Every TDS and TCS entry, and every challan. Anything you claim "
+            "that is not here is disallowed when the return is processed.",
+            file_format="PDF — use 'Export as PDF'. Text and the zip also work "
+                        "now, but the PDF is the format most exercised.",
+        ),
+        DocumentNeed(
+            "Annual Information Statement (AIS)",
+            "Services → AIS → " + ay.ay
+            + ". Password is your PAN in lower case then date of birth as "
+              "DDMMYYYY",
+            "What the department already knows: salary, interest, dividends, "
+            "securities sales. Income it shows and the return omits is the "
+            "commonest reason a notice arrives.",
+            file_format="JSON — the portal offers PDF and JSON, and the JSON "
+                        "is structured data that parses cleanly. Take the PDF "
+                        "as well if you want something readable.",
+        ),
+        DocumentNeed(
+            "Advance tax and self-assessment challans",
+            "e-Pay Tax → Payment History",
+            "You need the BSR code, challan serial number and date. The credit "
+            "is not matched without all three.",
+            essential=False,
+            file_format="PDF, or simply note the three numbers",
+        ),
+    ]
+    trips.append(portal)
+
+    # -- 2 ------------------------------------------------------------------
+    if yes("salary"):
+        employer = Trip(
+            len(trips) + 1, "Your employer",
+            "Payroll or the HR portal",
+            "Ask for both together. Form 16 usually arrives by mid-June; "
+            "Form 12BA has to be asked for by name more often than not."
+            + (" You need a set from every employer you had in the year."
+               if yes("multiple_employers") else ""),
+        )
+        employer.documents.append(DocumentNeed(
+            "Form 16, Parts A and B",
+            "Your employer" + (", from each one" if yes("multiple_employers")
+                               else ""),
+            "Part A is the TDS summary; Part B is the salary breakdown. You "
+            "need both.",
+            file_format="PDF. If it is password protected the password is "
+                        "usually your PAN then date of birth.",
+        ))
+        if yes("foreign_equity"):
+            employer.documents.append(DocumentNeed(
+                "Form 12BA",
+                "Your employer, issued alongside Form 16",
+                "The perquisite statement. It values your RSU vests and ESPP "
+                "discount, and tells you whether they are already inside the "
+                "Form 16 gross salary — which decides whether they get added "
+                "again or not at all.",
+                file_format="PDF",
+            ))
+        if yes("old_regime"):
+            employer.documents.append(DocumentNeed(
+                "Rent receipts and your landlord's PAN",
+                "Your landlord",
+                "Only if you claim HRA. The PAN is required once rent passes "
+                "₹1,00,000 in the year.",
+                essential=False, file_format="Scan or photo",
+            ))
+        trips.append(employer)
+
+    # -- 3 ------------------------------------------------------------------
+    if trading or yes("equity_delivery"):
+        broker = Trip(
+            len(trips) + 1, "Your Indian broker",
+            "Your broker's reports or console section",
+            "Everything here is one annual download per report. Take the "
+            "spreadsheet, never the PDF — the PDF of a trade list parses "
+            "badly and there is no reason to use it.",
+        )
+        if trading:
+            broker.documents += [
+                DocumentNeed(
+                    "Annual tax P&L, segment-wise",
+                    "Your broker's annual tax report for the financial year",
+                    "It must keep delivery, intraday and F&O apart. They are "
+                    "three different heads of income and merging them is "
+                    "unlawful in either direction.",
+                    file_format="XLSX or CSV — not PDF",
+                ),
+                DocumentNeed(
+                    "Annual charges and brokerage statement",
+                    "Your broker",
+                    "Brokerage, exchange and clearing charges, SEBI fees, STT "
+                    "or CTT, GST, stamp duty and depository charges are all "
+                    "deductible against business income. That is the "
+                    "compensation for the concessional capital-gains rate you "
+                    "have already lost by trading derivatives.",
+                    file_format="XLSX or CSV if offered, otherwise PDF",
+                ),
+            ]
+        if yes("equity_delivery"):
+            broker.documents += [
+                DocumentNeed(
+                    "Capital gains statement, trade-wise",
+                    "Your broker's annual tax report",
+                    "Trade-wise, not summary — the holding period on each lot "
+                    "decides the rate.",
+                    file_format="XLSX or CSV",
+                ),
+                DocumentNeed(
+                    "Consolidated capital gains statement for mutual funds",
+                    "CAMS or KFintech, free by email",
+                    "Covers every fund house at once, so you do not have to "
+                    "visit each.",
+                    essential=False, file_format="PDF or XLSX",
+                ),
+            ]
+        trips.append(broker)
+
+    # -- 4 ------------------------------------------------------------------
+    if yes("foreign_equity") or yes("foreign_dividend"):
+        foreign = Trip(
+            len(trips) + 1, "Your foreign broker or stock plan",
+            "E*TRADE, Fidelity, Schwab, Morgan Stanley StockPlan Connect",
+            "The most-missed trip. Note that Schedule FA runs on the "
+            f"**calendar** year — 1 January to 31 December {fy_label} — not "
+            "the financial year, so the year-end statement is a different "
+            "period from everything else here.",
+        )
+        if yes("foreign_equity"):
+            foreign.documents += [
+                DocumentNeed(
+                    "Vesting or release report, every tranche",
+                    "Your stock plan administrator",
+                    "Each vest needs the fair market value on its own date. "
+                    "Sixteen tranches are sixteen salary events at sixteen "
+                    "exchange rates.",
+                    file_format="CSV or XLSX if offered — the PDF release "
+                                "confirmations work but are one file per vest",
+                ),
+                DocumentNeed(
+                    "ESPP purchase confirmations",
+                    "Your stock plan administrator",
+                    "Fair market value on the purchase date, the price you "
+                    "paid, and the price at the start of the offering.",
+                    essential=False, file_format="CSV, XLSX or PDF",
+                ),
+                DocumentNeed(
+                    "Form 1099-B or realised gain-and-loss report",
+                    "Your broker",
+                    "Its cost basis is right for US tax and wrong for Indian "
+                    "tax — section 49(2AA) uses the value already taxed as a "
+                    "perquisite. The system corrects it; do not copy it.",
+                    essential=False, file_format="CSV or XLSX",
+                ),
+                DocumentNeed(
+                    f"Year-end statement: position on 31 December {fy_label} "
+                    "and the year's highest value",
+                    "Your broker",
+                    "For Schedule FA, which runs on the calendar year.",
+                    file_format="PDF — you will read two figures off it",
+                ),
+                DocumentNeed(
+                    "The company's and the broker's registered address and "
+                    "ZIP code",
+                    "The company's investor relations page; the broker's "
+                    "statement header",
+                    "Schedule FA asks for both and the portal will not accept "
+                    "the row without them.",
+                    file_format="Copy the text — nothing to download",
+                ),
+            ]
+        if yes("foreign_dividend"):
+            foreign.documents += [
+                DocumentNeed(
+                    "Form 1099-DIV or dividend activity report",
+                    "Your broker",
+                    "Declare the gross amount, before the 25% the US withholds. "
+                    "Netting it off understates income by a quarter and "
+                    "forfeits the credit.",
+                    file_format="CSV or XLSX",
+                ),
+                DocumentNeed(
+                    "Form 67",
+                    "File it on the portal BEFORE you file the return — "
+                    "e-File → Income Tax Forms → File Income Tax Forms",
+                    "Not a download: something you have to file. The foreign "
+                    "tax credit is liable to be denied outright if Form 67 is "
+                    "not already on record, which makes this the easiest way "
+                    "to lose money on the whole return.",
+                    file_format="Filed online — nothing to download",
+                ),
+            ]
+        trips.append(foreign)
+
+    # -- 5 ------------------------------------------------------------------
+    lookups = Trip(
+        len(trips) + 1, "Things to look up",
+        "Nothing to download — figures to type in",
+        "Leave these until the system tells you which ones it actually needs. "
+        "It names the exact months and scrips on the Foreign and Income pages, "
+        "so looking them up now is wasted effort.",
+    )
+    if yes("foreign_equity") or yes("foreign_dividend"):
+        lookups.documents.append(DocumentNeed(
+            "SBI TT buying rate, last day of each relevant month",
+            "sbi.co.in, or ask your bank",
+            "Rule 115 uses the rate on the last day of the month *before* the "
+            "income arose, never the day itself. The system lists exactly "
+            "which months it needs.",
+            file_format="A number per month",
+        ))
+    if yes("equity_delivery"):
+        lookups.documents.append(DocumentNeed(
+            "Highest quoted price on 31 January 2018",
+            "The exchange, for anything bought before that date",
+            "Section 55(2)(ac) grandfathers the gain up to that date. Without "
+            "it you pay tax on a gain that is not taxable.",
+            essential=False, file_format="A price per scrip",
+        ))
+    if yes("old_regime"):
+        lookups.documents.append(DocumentNeed(
+            "Deduction proofs — 80C, 80D, 80G, NPS",
+            "Your own records",
+            "An 80G receipt must carry the donee's PAN and 80G registration "
+            "number or the deduction fails.",
+            essential=False, file_format="Figures, with receipts kept on file",
+        ))
+    if lookups.documents:
+        trips.append(lookups)
+
+    return trips
 
 
 def _add_deadlines(guidance: Guidance, answers: Dict[str, bool], ay) -> None:

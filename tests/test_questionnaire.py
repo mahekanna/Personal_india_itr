@@ -296,3 +296,140 @@ def test_the_refusal_is_shown_before_anything_else(client):
     page = client.get(f"/returns/{return_id}/start").text
     assert "cannot file this return for you" in page
     assert page.index("cannot file this return") < page.index("You are filing")
+
+
+# --------------------------------------------------------------------------
+# The checklist as a sequence, not a pile
+# --------------------------------------------------------------------------
+
+
+def test_documents_are_grouped_by_where_you_have_to_go():
+    """They were grouped by head of income, which is how the *return* is
+    organised and not how the collecting is. You do not visit "salary"; you
+    log into one portal, email one employer, open one broker account."""
+    trips = build_guidance(RSU_TRADER, "2026-27").trips
+    titles = [trip.title for trip in trips]
+
+    assert titles[0] == "The income tax portal"
+    assert "Your employer" in titles
+    assert "Your Indian broker" in titles
+    assert "Your foreign broker or stock plan" in titles
+    assert titles[-1] == "Things to look up"
+    assert [trip.number for trip in trips] == list(range(1, len(trips) + 1))
+
+
+def test_a_simpler_return_gets_fewer_errands():
+    assert len(build_guidance(SALARIED, "2026-27").trips) == 2
+    assert len(build_guidance(RSU_TRADER, "2026-27").trips) == 5
+
+
+def test_the_portal_comes_first_because_it_tells_you_what_is_missing():
+    """26AS and the AIS between them are what the department already believes
+    about your year. Everything else is checked against them."""
+    first = build_guidance(SALARIED, "2026-27").trips[0]
+    names = [item.name for item in first.documents]
+    assert any("26AS" in name for name in names)
+    assert any("Annual Information Statement" in name for name in names)
+
+
+@pytest.mark.parametrize(
+    "document, expected",
+    [
+        ("Form 26AS", "PDF"),
+        ("Annual Information Statement (AIS)", "JSON"),
+        ("Annual tax P&L, segment-wise", "XLSX or CSV — not PDF"),
+        ("Form 16, Parts A and B", "PDF"),
+    ],
+)
+def test_every_document_says_which_format_to_pick(document, expected):
+    """The screens offer two or three formats and none of them says which one
+    parses. TRACES alone offers HTML, text and PDF."""
+    item = next(
+        d for d in build_guidance(RSU_TRADER, "2026-27").all_documents
+        if d.name == document
+    )
+    assert item.file_format.startswith(expected)
+
+
+def test_nothing_is_left_without_a_format():
+    for item in build_guidance(RSU_TRADER, "2026-27").all_documents:
+        assert item.file_format, item.name
+
+
+def test_progress_is_countable_and_essentials_come_first():
+    guidance = build_guidance(RSU_TRADER, "2026-27")
+    assert guidance.gathered([]) == 0
+
+    first_trip = [item.key for item in guidance.trips[0].documents]
+    assert guidance.gathered(first_trip) == len(first_trip)
+
+    outstanding = guidance.outstanding(first_trip)
+    assert len(outstanding) == guidance.document_count - len(first_trip)
+    assert outstanding[0].essential is True
+
+
+def test_a_documents_key_is_stable_across_re_answering():
+    """Otherwise changing one answer would untick everything already fetched."""
+    before = {d.name: d.key for d in build_guidance(TRADER, "2026-27").all_documents}
+    after = {d.name: d.key for d in build_guidance(RSU_TRADER, "2026-27").all_documents}
+    shared = set(before) & set(after)
+    assert shared
+    for name in shared:
+        assert before[name] == after[name]
+
+
+def test_ticking_survives_re_answering_the_questions(client):
+    from app.db import ReturnRecord, get_session
+
+    return_id = client.post(
+        "/returns/new", data={"assessment_year": "2026-27"},
+        follow_redirects=False,
+    ).headers["location"].split("/")[2]
+    client.post(f"/returns/{return_id}/start",
+                data={"resident": "on", "salary": "on"}, follow_redirects=False)
+
+    key = build_guidance({"resident": True, "salary": True},
+                         "2026-27").trips[0].documents[0].key
+    client.post(f"/returns/{return_id}/collected",
+                data={"key": key, "back": "start"}, follow_redirects=False)
+
+    # Change an answer — the document is the same document.
+    client.post(f"/returns/{return_id}/start",
+                data={"resident": "on", "salary": "on", "fno": "on"},
+                follow_redirects=False)
+
+    stored = get_session().get(ReturnRecord, return_id).load()
+    assert key in stored.profile.collected
+
+
+def test_ticking_twice_unticks(client):
+    from app.db import ReturnRecord, get_session
+
+    return_id = client.post(
+        "/returns/new", data={"assessment_year": "2026-27"},
+        follow_redirects=False,
+    ).headers["location"].split("/")[2]
+    client.post(f"/returns/{return_id}/start",
+                data={"resident": "on", "salary": "on"}, follow_redirects=False)
+
+    key = build_guidance({"resident": True, "salary": True},
+                         "2026-27").trips[0].documents[0].key
+    for _ in range(2):
+        client.post(f"/returns/{return_id}/collected",
+                    data={"key": key, "back": "start"}, follow_redirects=False)
+
+    stored = get_session().get(ReturnRecord, return_id).load()
+    assert key not in stored.profile.collected
+
+
+def test_a_junk_key_does_not_break_anything(client):
+    return_id = client.post(
+        "/returns/new", data={"assessment_year": "2026-27"},
+        follow_redirects=False,
+    ).headers["location"].split("/")[2]
+    response = client.post(f"/returns/{return_id}/collected",
+                           data={"key": "x" * 500, "back": "../../etc"},
+                           follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/start")
+    assert client.get(f"/returns/{return_id}/start").status_code == 200

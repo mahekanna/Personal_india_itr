@@ -174,7 +174,8 @@ def start_page(
     )
     return render("start.html",
         _ctx(request, record, step=0, groups=grouped_questions(),
-             answers=tr.profile.answers, guidance=guidance),
+             answers=tr.profile.answers, guidance=guidance,
+             collected=set(tr.profile.collected)),
     )
 
 
@@ -192,12 +193,39 @@ async def save_start(
     tr.profile = Profile(
         answered=True,
         answers={q.key: form.get(q.key) == "on" for q in QUESTIONS},
+        # Re-answering a question must not throw away documents already
+        # gathered — the keys are derived from the document, not the answers.
+        collected=list(tr.profile.collected),
     )
     if not tr.profile.answers.get("resident"):
         tr.taxpayer.residential_status = "NRI"
     record.save(tr)
     session.commit()
     return RedirectResponse(f"/returns/{return_id}/start", status_code=303)
+
+
+@app.post("/returns/{return_id}/collected")
+async def toggle_collected(
+    request: Request, return_id: str, session: Session = Depends(db_session)
+):
+    """Tick a document off the collection list, or untick it."""
+    record = _load(session, return_id)
+    tr = record.load()
+    form = await request.form()
+    key = (form.get("key") or "").strip()[:64]
+
+    collected = list(tr.profile.collected)
+    if key:
+        collected.remove(key) if key in collected else collected.append(key)
+    tr.profile = tr.profile.model_copy(update={"collected": collected})
+    record.save(tr)
+    session.commit()
+
+    back = form.get("back") or "start"
+    return RedirectResponse(
+        f"/returns/{return_id}/{_choice(back, ('start', 'documents'), 'start')}",
+        status_code=303,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -217,7 +245,8 @@ def documents_page(
     )
     return render("documents.html",
         _ctx(request, record, step=1, labels=DOCUMENT_LABELS,
-             documents=record.documents, guidance=guidance),
+             documents=record.documents, guidance=guidance,
+             collected=set(tr.profile.collected)),
     )
 
 

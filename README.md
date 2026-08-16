@@ -404,8 +404,24 @@ rate limiting before exposing it to anyone.
 
 ## Collecting your documents
 
-The first screen produces this list tailored to your answers, and the upload
-page keeps it visible as you go. In full, for the situations this covers:
+The first screen produces this list tailored to your answers, ticks off as you
+go, and keeps it visible on the upload page.
+
+It is ordered as **errands, not as a shopping list**. Documents used to be
+grouped by head of income, which is how the *return* is organised and not how
+the collecting is: you do not visit "salary", you log into one portal, email one
+employer, open one broker account. Grouped by destination it becomes five short
+trips, ordered so that nothing in a later one is needed to finish an earlier
+one — the portal first, because Form 26AS and the AIS between them are what the
+department already believes about your year, and everything after is checked
+against them.
+
+**Every item names the format to pick**, which is where most of the time goes.
+TRACES offers Form 26AS as HTML, text or PDF; the AIS offers PDF or JSON; a
+broker offers PDF or Excel. Only one of each parses well and none of those
+screens says which.
+
+In full, for the situations this covers:
 
 ### From the income tax portal — <https://incometax.gov.in>
 

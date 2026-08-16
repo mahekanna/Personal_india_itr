@@ -16,12 +16,16 @@
     From the answers you gave on the <a href="/returns/{{ record.id }}/start">first
     screen</a>. Starred items are needed to file at all.
   </p>
-  {% for group, items in guidance.documents.items() %}
-  <h3>{{ group }}</h3>
+  {% set done = collected if collected is defined else [] %}
+  {% for trip in guidance.trips %}
+  <h3>{{ trip.number }} · {{ trip.title }}</h3>
   <ul class="checklist">
-    {% for item in items %}
-    <li><strong>{% if item.essential %}★ {% endif %}{{ item.name }}</strong>
-      <div class="hint">{{ item.where }}</div></li>
+    {% for item in trip.documents %}
+    <li>
+      <strong {% if item.key in done %}style="opacity:.5;text-decoration:line-through"{% endif %}>{%
+        if item.essential %}★ {% endif %}{{ item.name }}</strong>
+      {% if item.file_format %}<div class="hint">{{ item.file_format }}</div>{% endif %}
+    </li>
     {% endfor %}
   </ul>
   {% endfor %}

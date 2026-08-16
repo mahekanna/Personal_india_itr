@@ -747,6 +747,9 @@ class Profile(_Base):
 
     answered: bool = False
     answers: Dict[str, bool] = Field(default_factory=dict)
+    # Keys of the documents already gathered, so the checklist is a place you
+    # are in a sequence rather than a wall of everything at once.
+    collected: List[str] = Field(default_factory=list)
 
 
 class TaxReturn(_Base):

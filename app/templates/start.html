@@ -68,26 +68,56 @@
   {% if guidance.disqualifications is defined %}{% endif %}
 </section>
 
+{% set done = collected if collected is defined else [] %}
 <section class="card">
-  <h2>What to gather — {{ guidance.document_count }} items</h2>
-  <p class="hint">
-    The starred ones are needed to file at all. The rest are needed only if they
-    apply to you, but each is worth checking: most of what goes wrong on an
-    Indian return is a document nobody knew to collect.
+  <h2>What to collect — {{ guidance.gathered(done) }} of
+      {{ guidance.document_count }} done</h2>
+  <p class="lede">
+    Five errands, in order. Nothing in a later one is needed to finish an
+    earlier one, so work down the list and tick as you go. <strong>The format
+    matters</strong> — most of these screens offer two or three, and only one
+    is the right answer.
   </p>
 
-  {% for group, items in guidance.documents.items() %}
-  <h3>{{ group }}</h3>
-  <ul class="checklist">
-    {% for item in items %}
-    <li>
-      <strong>{% if item.essential %}★ {% endif %}{{ item.name }}</strong>
-      <div class="hint">Where: {{ item.where }}</div>
-      {% if item.why %}<div class="hint">{{ item.why }}</div>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
+  {% for trip in guidance.trips %}
+  {% set trip_done = trip.documents | selectattr('key', 'in', done) | list | length %}
+  <div class="repeat-row">
+    <div class="repeat-row-head">
+      <strong>{{ trip.number }} · {{ trip.title }}</strong>
+      <span class="hint">{{ trip_done }}/{{ trip.documents | length }}</span>
+    </div>
+    <p class="hint"><strong>Go to:</strong> {{ trip.where }}</p>
+    {% if trip.note %}<p class="hint">{{ trip.note }}</p>{% endif %}
+
+    <ul class="checklist">
+      {% for item in trip.documents %}
+      <li>
+        <form method="post" action="/returns/{{ record.id }}/collected"
+              style="display:inline">
+          <input type="hidden" name="key" value="{{ item.key }}">
+          <input type="hidden" name="back" value="start">
+          <button type="submit" class="btn btn-quiet btn-small"
+                  title="Mark as collected">
+            {% if item.key in done %}&#10003;{% else %}&nbsp;&nbsp;{% endif %}
+          </button>
+        </form>
+        <strong {% if item.key in done %}style="opacity:.5;text-decoration:line-through"{% endif %}>{%
+          if item.essential %}★ {% endif %}{{ item.name }}</strong>
+        {% if item.file_format %}
+        <div class="hint"><strong>Format:</strong> {{ item.file_format }}</div>
+        {% endif %}
+        <div class="hint">{{ item.where }}</div>
+        {% if item.why %}<div class="hint">{{ item.why }}</div>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
   {% endfor %}
+
+  <p class="hint">
+    ★ means you cannot file without it. The rest apply only if they apply to
+    you — but each is one people routinely do not know to collect.
+  </p>
 </section>
 
 {% if guidance.warnings %}
