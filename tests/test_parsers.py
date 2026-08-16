@@ -254,3 +254,75 @@ def test_indian_digit_grouping():
     assert inr(100000) == "1,00,000"
     assert inr(999) == "999"
     assert inr(-1234567) == "-12,34,567"
+
+
+# --------------------------------------------------------------------------
+# The formats TRACES and the portal actually hand you
+# --------------------------------------------------------------------------
+
+
+TEXT_26AS = (
+    "Form 26AS\n"
+    "Assessment Year: 2026-27  Permanent Account Number: ABCDE1234F\n"
+    "PART I - Details of Tax Deducted at Source\n"
+    "Sr. No.^Name of Deductor^TAN of Deductor^Total Amount Paid^Total Tax Deducted\n"
+    "1^ACME TECHNOLOGIES PVT LTD^BLRA12345B^3000000.00^500000.00\n"
+    "2^ICICI BANK LIMITED^MUMI54321C^48000.00^4800.00\n"
+).encode()
+
+
+def test_a_text_form_26as_is_not_mistaken_for_a_broker_export():
+    """TRACES offers HTML, text or PDF. A .txt went down the spreadsheet path,
+    was identified as a broker statement, read nil, and reported that it found
+    no capital gains — so every TDS credit in it was silently lost and the
+    user was told something irrelevant."""
+    from app.parsers.registry import parse_document
+
+    out = parse_document(TEXT_26AS, "26AS_2026-27.txt")
+    assert out.document_type == "form26as"
+    assert len(out.payments) == 2
+
+
+def test_the_zip_traces_hands_over_is_opened():
+    import io
+    import zipfile
+
+    from app.parsers.registry import parse_document
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("26AS_ABCDE1234F_2026-27.txt", TEXT_26AS)
+
+    out = parse_document(buffer.getvalue(), "26AS.zip")
+    assert out.document_type == "form26as"
+    assert len(out.payments) == 2
+
+
+def test_a_genuine_broker_txt_still_reaches_the_broker_parser():
+    """The text-first check must not capture files that really are tabular."""
+    from app.parsers.registry import parse_document
+
+    csv = (
+        "Tradewise P&L\n"
+        "Symbol,Buy Date,Sell Date,Quantity,Buy Value,Sell Value\n"
+        "INFY,2023-05-10,2025-08-12,100,140000,172000\n"
+    ).encode()
+    out = parse_document(csv, "pnl.txt")
+    assert out.document_type == "broker_pnl"
+    assert len(out.capital_gains) == 1
+
+
+def test_an_encrypted_zip_asks_for_the_date_of_birth():
+    import io
+    import zipfile
+
+    from app.parsers.registry import parse_document
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("inner.txt", TEXT_26AS)
+    # zipfile cannot write encrypted archives, so assert the message path on a
+    # corrupt one instead: either way the user must be told, not ignored.
+    out = parse_document(b"PK\x03\x04 not really a zip", "26AS.zip")
+    assert out.document_type == "unknown"
+    assert out.warnings

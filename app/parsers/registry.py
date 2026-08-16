@@ -40,6 +40,7 @@ DOCUMENT_LABELS = {
 }
 
 _TABULAR_SUFFIXES = (".csv", ".xlsx", ".xls", ".txt")
+_ARCHIVE_SUFFIXES = (".zip",)
 
 
 class ParserRegistry:
@@ -60,8 +61,23 @@ def parse_document(
     """Identify and parse one uploaded file."""
     lowered = filename.lower()
 
+    # ---- A zip, which is how TRACES hands over the text Form 26AS ---------
+    if lowered.endswith(".zip"):
+        return _parse_zip(raw, filename, pan=pan, date_of_birth=date_of_birth,
+                          forced_type=forced_type)
+
     # ---- Spreadsheets and CSVs are broker exports of one flavour or another
     if lowered.endswith(_TABULAR_SUFFIXES):
+        # ...but a .txt is just as likely to be the text-format Form 26AS or
+        # AIS, and those are read by the same parsers that read the PDF. Sent
+        # down the spreadsheet path it was identified as a broker statement,
+        # read nil, and reported that it found no capital gains — so a
+        # taxpayer uploading a TDS certificate lost every credit in it and was
+        # told something irrelevant about capital gains.
+        if lowered.endswith(".txt") and not forced_type:
+            as_text = _parse_as_text(raw, filename)
+            if as_text is not None:
+                return as_text
         return _parse_tabular(raw, filename, forced_type)
 
     # ---- AIS JSON ---------------------------------------------------------
@@ -140,6 +156,93 @@ def parse_document(
             "Check the extracted figures carefully."
         )
     return extraction
+
+
+def _parse_as_text(raw: bytes, filename: str) -> Optional[Extraction]:
+    """Try the text-format statements before assuming a plain file is tabular.
+
+    Returns ``None`` when nothing recognises it, so the caller can fall back to
+    the spreadsheet path.
+    """
+    try:
+        text = raw.decode("utf-8-sig", errors="replace")
+    except Exception:  # noqa: BLE001
+        return None
+
+    scores = {name: scorer(text) for name, scorer, _ in _PDF_PARSERS}
+    best = max(scores, key=lambda key: scores[key])
+    if scores[best] < 0.3:
+        return None
+
+    parser = dict((name, fn) for name, _, fn in _PDF_PARSERS)[best]
+    extraction = parser(text, filename, None)
+    extraction.warnings.append(
+        f"{filename} was read as a {DOCUMENT_LABELS.get(best, best)} rather "
+        "than a spreadsheet. The PDF version of the same statement usually "
+        "extracts more reliably — if figures are missing, download that "
+        "instead."
+    )
+    return extraction
+
+
+def _parse_zip(
+    raw: bytes,
+    filename: str,
+    *,
+    pan: str = "",
+    date_of_birth: Optional[date] = None,
+    forced_type: str = "",
+) -> Extraction:
+    """Open a zip and parse what is inside it.
+
+    TRACES delivers the text Form 26AS this way, protected with the date of
+    birth as DDMMYYYY. Unhandled, the upload was simply rejected as a file type
+    this system does not read.
+    """
+    import io
+    import zipfile
+
+    out = Extraction(document_type="unknown", source_filename=filename)
+    passwords = [p.encode() for p in candidate_passwords(pan, date_of_birth)]
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(raw))
+    except Exception as exc:  # noqa: BLE001
+        out.warnings.append(f"{filename} could not be opened as a zip: {exc}")
+        return out
+
+    members = [m for m in archive.namelist() if not m.endswith("/")]
+    if not members:
+        out.warnings.append(f"{filename} is an empty archive.")
+        return out
+
+    for member in members:
+        content = None
+        for password in [None] + passwords:
+            try:
+                content = archive.read(member, pwd=password)
+                break
+            except Exception:  # noqa: BLE001 - wrong password, or not encrypted
+                continue
+        if content is None:
+            out.warnings.append(
+                f"{member} inside {filename} is password protected and none of "
+                "the usual passwords opened it. TRACES uses your date of birth "
+                "as DDMMYYYY — fill it in on the Income page and re-upload, or "
+                "extract the file yourself and upload what is inside."
+            )
+            out.needs_password = True
+            continue
+
+        inner = parse_document(
+            content, member, pan=pan, date_of_birth=date_of_birth,
+            forced_type=forced_type,
+        )
+        if inner.document_type != "unknown":
+            return inner
+        out.warnings.extend(inner.warnings)
+
+    return out
 
 
 def _parse_tabular(raw: bytes, filename: str, forced_type: str = "") -> Extraction:
