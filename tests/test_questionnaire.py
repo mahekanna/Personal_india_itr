@@ -245,3 +245,54 @@ def test_saying_you_are_not_resident_sets_the_status(client):
 def test_every_question_belongs_to_a_displayed_group():
     shown = {q.key for _, questions in grouped_questions() for q in questions}
     assert shown == {q.key for q in QUESTIONS}
+
+
+# --------------------------------------------------------------------------
+# Saying so when it cannot help
+# --------------------------------------------------------------------------
+
+
+def test_crypto_is_refused_rather_than_computed_wrongly():
+    """The worst failure mode this system has. Section 115BBH is a flat 30%
+    with no set-off of any kind; left unimplemented, a crypto gain would land
+    in ordinary capital gains at 12.5% and quietly absorb losses the section
+    forbids. Silent and plausible is worse than loud and absent."""
+    guidance = build_guidance({**SALARIED, "crypto": True}, "2026-27")
+    assert guidance.usable is False
+    assert any("115BBH" in b for b in guidance.blockers)
+
+
+def test_a_non_resident_is_told_not_to_rely_on_the_number():
+    guidance = build_guidance({"salary": True}, "2026-27")
+    assert guidance.usable is False
+    assert any("ordinarily resident" in b for b in guidance.blockers)
+
+
+def test_a_huf_return_is_refused():
+    guidance = build_guidance({**SALARIED, "huf": True}, "2026-27")
+    assert guidance.usable is False
+
+
+def test_books_of_account_are_refused():
+    guidance = build_guidance({**SALARIED, "business": True}, "2026-27")
+    assert guidance.usable is False
+    assert any("balance sheet" in b for b in guidance.blockers)
+
+
+def test_the_supported_case_is_not_blocked():
+    assert build_guidance(RSU_TRADER, "2026-27").usable is True
+    assert build_guidance(SALARIED, "2026-27").usable is True
+
+
+def test_the_refusal_is_shown_before_anything_else(client):
+    return_id = client.post(
+        "/returns/new", data={"assessment_year": "2026-27"},
+        follow_redirects=False,
+    ).headers["location"].split("/")[2]
+    client.post(f"/returns/{return_id}/start",
+                data={"resident": "on", "salary": "on", "crypto": "on"},
+                follow_redirects=False)
+
+    page = client.get(f"/returns/{return_id}/start").text
+    assert "cannot file this return for you" in page
+    assert page.index("cannot file this return") < page.index("You are filing")

@@ -39,6 +39,21 @@
   </div>
 </form>
 
+{% if guidance and guidance.blockers %}
+<section class="card" style="border-left:4px solid #b00020">
+  <h2>This system cannot file this return for you</h2>
+  <p>
+    Everything below is still shown, because the checklist and the deadlines
+    are useful whoever prepares it. But the computation would be wrong, and a
+    tax return that is confidently wrong is worse than no tax return at all.
+    Take these to a chartered accountant.
+  </p>
+  {% for blocker in guidance.blockers %}
+  <p class="warning">{{ blocker }}</p>
+  {% endfor %}
+</section>
+{% endif %}
+
 {% if guidance %}
 <section class="card">
   <h2>You are filing {{ guidance.form }}</h2>

@@ -439,27 +439,77 @@ Two invariants worth knowing about, because they are easy to get wrong:
 
 ---
 
+## Who this is for
+
+Someone **resident and ordinarily resident**, with any combination of:
+
+- salary, from one employer or several
+- one or more house properties
+- delivery equity and mutual funds — capital gains
+- intraday, F&O, currency and commodity trading — business income, ITR-3
+- US stock compensation: RSUs, ESPP, dividends, dividend reinvestment,
+  Schedule FA, Schedule FSI, Form 67
+- interest, dividends and the ordinary other-sources items
+
+That covers ITR-1, ITR-2 and ITR-3, and it is deliberately the band of people
+who find those forms hardest.
+
+## Who it is NOT for
+
+The first screen asks about each of these and **refuses to compute** rather than
+producing a plausible wrong answer. That refusal is the feature; a tax return
+that is confidently wrong is worse than none.
+
+- **Crypto and other virtual digital assets.** Not implemented at all. Section
+  115BBH is a flat 30% with no deduction beyond cost and — unusually — no
+  set-off of a loss against anything, not even another crypto gain. Left
+  unhandled, a gain would fall into ordinary capital gains at 12.5% and quietly
+  absorb losses the section forbids. This is the one gap that would have failed
+  silently, which is why it is asked about first.
+- **Non-residents and RNOR.** Residence changes what is taxable at all, whether
+  the basic exemption can shelter capital gains, and which treaty applies.
+- **HUF returns.** Individuals only; the JSON declares the status as individual.
+- **A business or profession with real books** — stock, debtors, depreciation, a
+  balance sheet. It handles trading, where the broker's statement is the only
+  record there is.
+
 ## What it does not do
 
-- **Submit the return.** See above.
-- **ITR-3** — business income with regular books of account. The computation and
-  filing pack still work; only JSON generation is absent.
+- **Submit the return.** See above — that needs an ERI licence.
 - **ITR-4 JSON** — presumptive income under 44AD, 44ADA and 44AE is computed and
-  appears in the filing pack, but the JSON is not generated yet.
-- **Non-resident taxation**, and relief under section 89 for salary arrears.
-  Section 90 relief on foreign income *is* computed; section 91 relief, for
-  countries India has no treaty with, is not.
+  appears in the filing pack, but the JSON is not generated.
+- **Relief under section 89** for salary arrears, and **section 91** relief for
+  countries India has no treaty with. Section 90 relief *is* computed.
+- **Clubbing of income** under section 64 — a spouse's or minor child's income.
+- **Agricultural income** aggregated for rate purposes.
 - **ESOPs with deferred taxation** under section 191(2) for eligible start-ups.
 - **Disqualifying dispositions** and other US-side ESPP concepts. They change
   the US tax treatment; they have no bearing on the Indian computation, which
   fixes the perquisite at the purchase date regardless of when you sell.
 - **Currencies other than USD** are converted through a cross-rate off USD,
   which is cruder than the direct rate. Enter the rate by hand for EUR or GBP.
-- **F&O and speculative business income**, which are business heads, not capital
-  gains.
 - **Scanned documents.** There is no OCR. Download the digitally generated PDF
   from the source, or enter those figures by hand.
 - **Replace a chartered accountant** on anything genuinely contentious.
+
+## What has never been tested against reality
+
+Stated plainly, because you are about to trust this with a tax return:
+
+- **No real Form 16, Form 26AS, AIS or broker statement has been through the
+  parsers.** Every fixture is synthetic and written by the same author as the
+  parser, which is circular. Check every figure on the review screen against
+  your own document — the screen exists for that.
+- **No generated JSON has ever been imported into the department's offline
+  utility.** The arithmetic inside the schedules is tested; the element names
+  are written from the published schema and are not corroborated. If the import
+  is refused, that is a naming problem rather than a tax one, and the filing
+  pack carries the same figures to key in by hand.
+- **The built-in exchange rates are provisional reference figures**, flagged as
+  such wherever they are used. Look up the published SBI TT buying rate for each
+  month end before filing.
+- **The tests are self-authored**, and test the author's reading of the statute.
+  Each cites the section it relies on so the reading can be checked.
 
 ---
 

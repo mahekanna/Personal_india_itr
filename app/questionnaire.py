@@ -139,6 +139,20 @@ QUESTIONS: List[Question] = [
         "Taxed at a flat 30% with no deduction and no rebate.",
     ),
     Question(
+        "crypto",
+        "Did you buy or sell crypto, or any other virtual digital asset?",
+        "Section 115BBH taxes these at a flat 30% with no deduction except the "
+        "cost, and — unusually — a loss cannot be set off against anything at "
+        "all, not even another crypto gain.",
+        "Investments and trading",
+    ),
+    Question(
+        "huf",
+        "Are you filing for a Hindu Undivided Family rather than yourself?",
+        "",
+        "About you",
+    ),
+    Question(
         "director_or_unlisted",
         "Are you a director of a company, or do you hold unlisted shares?",
         "Either one rules out the simpler forms on its own.",
@@ -184,6 +198,44 @@ class DocumentNeed:
     essential: bool = True
 
 
+# Situations this system does not compute correctly. Each one is asked about
+# rather than inferred, because the failure would otherwise be silent — a
+# confident, plausible, wrong return — and that is the worst way for a tax tool
+# to be wrong.
+UNSUPPORTED = {
+    "crypto": (
+        "Crypto and other virtual digital assets are not implemented at all. "
+        "Section 115BBH taxes them at a flat 30%, allows no deduction beyond "
+        "the cost of acquisition, and does not permit a loss to be set off "
+        "against anything — not even another crypto gain. This system would "
+        "put the gain into ordinary capital gains at 12.5% or slab rates and "
+        "quietly allow set-offs the section forbids. Use something else, or a "
+        "chartered accountant."
+    ),
+    "huf": (
+        "Only individual returns are produced. A HUF return is a different "
+        "assessee with its own PAN, and the generated JSON declares the status "
+        "as individual."
+    ),
+    "business": (
+        "A business or profession with real books — stock, debtors, "
+        "depreciation, a balance sheet — is beyond what this computes. It "
+        "handles trading, where the broker's statement is the only record "
+        "there is. Presumptive schemes under 44AD and 44ADA are recognised but "
+        "their JSON is not generated."
+    ),
+}
+
+NON_RESIDENT_WARNING = (
+    "You have said you were not resident for the whole year. Residence, and "
+    "the RNOR status in between, change which income is taxable at all, "
+    "whether the basic exemption can shelter capital gains, and which treaty "
+    "applies. None of that is properly implemented here. The computation will "
+    "produce a number and it should not be relied on — this system is built "
+    "for a resident and ordinarily resident individual."
+)
+
+
 @dataclass
 class Guidance:
     form: str
@@ -193,6 +245,13 @@ class Guidance:
     documents: Dict[str, List[DocumentNeed]] = field(default_factory=dict)
     deadlines: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    # Things this system cannot do for the situation described. Shown first
+    # and shown loudly, before any figure is entered.
+    blockers: List[str] = field(default_factory=list)
+
+    @property
+    def usable(self) -> bool:
+        return not self.blockers
 
     @property
     def document_count(self) -> int:
@@ -488,6 +547,14 @@ def build_guidance(answers: Dict[str, bool], assessment_year: str) -> Guidance:
         "and the credit will not be matched without all three.",
         essential=False,
     ))
+
+    for key, message in UNSUPPORTED.items():
+        if yes(key):
+            guidance.blockers.append(message)
+    if not yes("resident"):
+        guidance.blockers.append(NON_RESIDENT_WARNING)
+    if not guidance.form_supported and guidance.form_note:
+        guidance.blockers.append(f"{guidance.form}: {guidance.form_note}")
 
     _add_deadlines(guidance, answers, ay)
     return guidance
